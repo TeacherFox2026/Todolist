@@ -77,8 +77,9 @@
 </head>
 <body class="text-gray-800 font-bold">
 
-<!-- 貓咪鼓勵 Toast 提示框 -->
-<div id="cat-toast" class="doodle-box fixed top-24 left-1/2 transform -translate-x-1/2 px-5 py-3 text-pink-600 font-bold z-50 transition-all duration-300 opacity-0 pointer-events-none scale-95 flex items-center gap-2 w-max max-w-[90%] text-sm md:text-base"></div>
+<!-- 貓咪鼓勵 Toast 提示框 (字體放大) -->
+<div id="cat-toast" class="doodle-box fixed top-24 left-1/2 transform -translate-x-1/2 px-5 py-3 text-pink-600 font-bold z-50 transition-all duration-300 opacity-0 pointer-events-none scale-95 flex items-center gap-2 w-max max-w-[90%] text-base md:text-xl">
+</div>
 
 <div class="app-container relative flex flex-col h-screen overflow-hidden">
     
@@ -383,13 +384,15 @@
 
     function showCatToast(msg) {
         const toast = document.getElementById('cat-toast');
-        toast.innerHTML = `<i class="ph-fill ph-cat text-2xl text-pink-500"></i> <span class="text-gray-800">${msg}</span>`;
+        toast.innerHTML = `<i class="ph-fill ph-cat text-3xl text-pink-500"></i> <span class="text-gray-800 leading-snug">${msg}</span>`;
         toast.classList.remove('opacity-0', 'scale-95', 'pointer-events-none');
         toast.classList.add('opacity-100', 'scale-100', '-translate-y-2');
+        
+        // 延長顯示時間至 3.5 秒 (3500ms)
         setTimeout(() => {
             toast.classList.remove('opacity-100', 'scale-100', '-translate-y-2');
             toast.classList.add('opacity-0', 'scale-95', 'pointer-events-none');
-        }, 2500);
+        }, 3500);
     }
 
     // --- 記事操作 ---
@@ -660,3 +663,11 @@
 
 </body>
 </html>
+
+
+
+
+
+
+
+
