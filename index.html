@@ -88,7 +88,8 @@
             <i class="ph-fill ph-cat text-2xl sm:text-3xl text-pink-500"></i> 貓咪記事本
         </h1>
         <div class="flex gap-2">
-            <button id="install-btn" onclick="openInstallModal()" class="doodle-btn bg-white text-pink-500 p-1.5 sm:p-2 flex items-center justify-center" title="安裝到手機">
+            <!-- 注意這裡將 class 中的 flex 改為 hidden，讓它預設隱藏 -->
+            <button id="install-btn" onclick="openInstallModal()" class="doodle-btn bg-white text-pink-500 p-1.5 sm:p-2 hidden items-center justify-center" title="安裝到手機">
                 <i class="ph-bold ph-device-mobile text-lg text-gray-800"></i>
             </button>
             <button onclick="openDataModal()" class="doodle-btn bg-white text-gray-500 p-1.5 sm:p-2 flex items-center justify-center" title="資料管理">
@@ -157,7 +158,7 @@
 
     <!-- 作者標記 -->
     <div class="absolute bottom-1 right-3 text-[12px] text-gray-500 font-extrabold pointer-events-none z-0 transform -rotate-2">
-        🖍️ Made by TeacherFox
+        Made by TeacherFox 🦊
     </div>
 
     <!-- PWA 安裝教學 Modal -->
@@ -233,11 +234,11 @@
     // 貓咪鼓勵語錄 (取消打勾/重做)
     const catUncheckEncouragements = [ "沒關係喵，我們重新再來！🐾", "本喵陪你一起重新挑戰喵！💪", "休息一下再出發喵！☕", "不急不急，慢慢來喵~🐢" ];
 
-    // --- 核心：智能萃取文字中的日期 (簡易 NLP) ---
+    // --- 核心：智能萃取文字中的日期與時間 (簡易 NLP) ---
     function extractDateFromText(text) {
         const now = new Date();
         let targetDate = null;
-        let dateStr = "";
+        let hasTime = false;
 
         // 1. 相對日期關鍵字
         if (text.includes("今天")) { targetDate = new Date(); }
@@ -277,12 +278,55 @@
             }
         }
 
-        // 如果有抓到日期，回傳時間戳記與格式化顯示字串
+        // 4. 具體時間 (例如 下午3點20, 早上9點半, 14:30)
+        const timeMatch = text.match(/(凌晨|早上|上午|中午|下午|晚上)?\s*(\d{1,2})\s*(?:點|時|:)\s*(半|\d{1,2}分?)?/);
+        if (timeMatch) {
+            let period = timeMatch[1];
+            let hour = parseInt(timeMatch[2]);
+            let minuteStr = timeMatch[3];
+            let minute = 0;
+
+            // 判斷分鐘數 (半 = 30分)
+            if (minuteStr === '半') {
+                minute = 30;
+            } else if (minuteStr) {
+                minute = parseInt(minuteStr.replace('分', ''));
+            }
+
+            // 處理 AM/PM 邏輯
+            if (period) {
+                if ((period === '下午' || period === '晚上') && hour < 12) {
+                    hour += 12;
+                } else if ((period === '凌晨' || period === '早上' || period === '上午') && hour === 12) {
+                    hour = 0;
+                }
+            }
+
+            // 如果有提到時間但沒提到日期，預設為「今天」
+            if (!targetDate) {
+                targetDate = new Date();
+            }
+            
+            targetDate.setHours(hour, minute, 0, 0);
+            hasTime = true;
+        }
+
+        // 如果有抓到日期或時間，回傳時間戳記與格式化顯示字串
         if (targetDate) {
-            targetDate.setHours(23, 59, 59, 999); // 設為該日的最後一刻
+            if (!hasTime) {
+                targetDate.setHours(23, 59, 59, 999); // 沒指定時間的話，預設排在該日的最後一刻
+            }
+            
+            let formatted = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
+            if (hasTime) {
+                let h = targetDate.getHours().toString().padStart(2, '0');
+                let m = targetDate.getMinutes().toString().padStart(2, '0');
+                formatted += ` ${h}:${m}`;
+            }
+            
             return {
                 timestamp: targetDate.getTime(),
-                formatted: `${targetDate.getMonth() + 1}/${targetDate.getDate()}`
+                formatted: formatted
             };
         }
         return null;
@@ -292,12 +336,47 @@
     document.addEventListener('DOMContentLoaded', () => {
         renderTasks();
         setupPWA();
+        checkInstallState(); // 網頁載入時檢查是否為 App 模式
     });
 
     window.addEventListener('beforeinstallprompt', (e) => {
         e.preventDefault();
         deferredPrompt = e;
-        document.getElementById('install-btn').style.display = 'flex';
+        // 確保在非 standalone(獨立 App) 模式下才顯示安裝按鈕
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches || window.navigator.standalone;
+        if (!isStandalone) {
+            const btn = document.getElementById('install-btn');
+            btn.classList.remove('hidden');
+            btn.classList.add('flex');
+            btn.style.display = 'flex';
+        }
+    });
+
+    // 檢查安裝狀態，控制按鈕的顯示與隱藏
+    function checkInstallState() {
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
+                             window.matchMedia('(display-mode: fullscreen)').matches ||
+                             window.navigator.standalone || 
+                             document.referrer.includes('android-app://');
+        
+        const installBtn = document.getElementById('install-btn');
+        if (isStandalone) {
+            installBtn.style.display = 'none';
+        } else {
+            // iOS 不會觸發 beforeinstallprompt，所以如果是 iOS 且不在 standalone，就手動顯示按鈕
+            const ua = navigator.userAgent.toLowerCase();
+            const isIOS = /ipad|iphone|ipod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            if (isIOS) {
+                installBtn.classList.remove('hidden');
+                installBtn.classList.add('flex');
+                installBtn.style.display = 'flex';
+            }
+        }
+    }
+
+    // 監聽「剛完成安裝」的事件，立刻隱藏按鈕
+    window.addEventListener('appinstalled', () => {
+        document.getElementById('install-btn').style.display = 'none';
     });
 
     function saveTasks() { localStorage.setItem('catTasks', JSON.stringify(tasks)); }
@@ -452,7 +531,7 @@
 
                 <!-- 中欄：筆記內容與日期標籤 -->
                 <div class="flex-1 min-w-0 flex flex-col justify-start">
-                    <div id="text-${task.id}" class="font-bold break-words text-[14px] sm:text-base leading-snug ${task.isCompleted ? 'text-gray-400 line-through' : 'text-gray-800'} ${clampClass}">
+                    <div id="text-${task.id}" class="font-bold break-words text-base sm:text-lg leading-snug ${task.isCompleted ? 'text-gray-400 line-through' : 'text-gray-800'} ${clampClass}">
                         ${task.text}
                     </div>
                     ${dateBadge}
@@ -475,7 +554,7 @@
             const items = grouped[category];
             
             if (items.length === 0) {
-                listEl.innerHTML = `<li class="text-center text-[14px] py-2 text-gray-500 font-bold border-2 border-dashed border-gray-400 rounded-lg bg-gray-50/50 transform rotate-1">沒有任務喵 🐾</li>`;
+                listEl.innerHTML = `<li class="text-center text-base py-2 text-gray-500 font-bold border-2 border-dashed border-gray-400 rounded-lg bg-gray-50/50 transform rotate-1">沒有任務喵 🐾</li>`;
                 return;
             }
 
