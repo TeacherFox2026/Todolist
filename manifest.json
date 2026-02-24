@@ -1,0 +1,40 @@
+{
+    "name": "貓咪記事本",
+    "short_name": "貓咪記事",
+    "start_url": "./index.html",
+    "display": "standalone",
+    "background_color": "#fdfaf6",
+    "theme_color": "#fef08a",
+    "icons": [
+        {
+            "src": "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐱</text></svg>",
+            "sizes": "192x192",
+            "type": "image/svg+xml"
+        },
+        {
+            "src": "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐱</text></svg>",
+            "sizes": "512x512",
+            "type": "image/svg+xml"
+        }
+    ]
+}
+
+**2. 新增檔案命名為 `sw.js`**（內容直接複製下方，這是一個基礎的 Service Worker，用於滿足 Chrome 離線快取要求）：
+```javascript
+const CACHE_NAME = 'cat-tasks-cache-v1';
+
+self.addEventListener('install', (e) => {
+    self.skipWaiting();
+});
+
+self.addEventListener('activate', (e) => {
+    e.waitUntil(clients.claim());
+});
+
+self.addEventListener('fetch', (e) => {
+    e.respondWith(
+        fetch(e.request).catch(() => new Response('Offline'))
+    );
+});
+
+只要確保這三個檔案（`index.html`, `manifest.json`, `sw.js`）都上傳到了您的 GitHub Pages，Android 使用者打開連結時，點擊右上角的「手機圖示」，就會直接跳出系統內建的漂亮安裝視窗了！
