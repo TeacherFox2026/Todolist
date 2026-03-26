@@ -265,11 +265,30 @@
 </div>
 
 <script>
-    // --- 1. 資料與狀態管理 (加入陣列防護) ---
+    // --- 1. 資料與狀態管理 (加入陣列防護與舊版資料相容機制) ---
     let tasks = [];
     try {
         const parsed = JSON.parse(localStorage.getItem('catTasks'));
-        if (Array.isArray(parsed)) tasks = parsed;
+        if (Array.isArray(parsed)) {
+            let needsMigration = false;
+            tasks = parsed.map(t => {
+                // 修復 1：舊版的「一般(normal)」分類消失，導致資料隱藏，自動轉移至「慢慢來(slow)」
+                if (t.tag === 'normal') {
+                    t.tag = 'slow';
+                    needsMigration = true;
+                }
+                // 修復 2：補齊舊資料缺少的屬性，避免渲染異常
+                if (t.isCompleted === undefined) { t.isCompleted = false; needsMigration = true; }
+                if (t.reminderEnabled === undefined) { t.reminderEnabled = true; needsMigration = true; }
+                if (typeof t.id === 'number') { t.id = String(t.id); needsMigration = true; }
+                return t;
+            });
+            
+            // 如果有升級舊資料，自動存檔
+            if (needsMigration) {
+                localStorage.setItem('catTasks', JSON.stringify(tasks));
+            }
+        }
     } catch (e) {
         console.error('LocalStorage 讀取失敗', e);
     }
@@ -447,21 +466,20 @@
 
     function saveTasks() { localStorage.setItem('catTasks', JSON.stringify(tasks)); }
 
-    let toastTimeout; // 新增：用於控制 Toast 的計時器，避免多次呼叫衝突
+    let toastTimeout; 
     function showCatToast(msg) {
         const toast = document.getElementById('cat-toast');
         toast.innerHTML = `<i class="ph-fill ph-cat text-3xl text-pink-500"></i> <span class="text-gray-800 leading-snug">${msg}</span>`;
         toast.classList.remove('opacity-0', 'scale-95', 'pointer-events-none');
         toast.classList.add('opacity-100', 'scale-100', '-translate-y-2');
         
-        if (toastTimeout) clearTimeout(toastTimeout); // 清除前一個計時器
+        if (toastTimeout) clearTimeout(toastTimeout);
         toastTimeout = setTimeout(() => {
             toast.classList.remove('opacity-100', 'scale-100', '-translate-y-2');
             toast.classList.add('opacity-0', 'scale-95', 'pointer-events-none');
         }, 3500);
     }
 
-    function requestNotificationPermission() {
     function requestNotificationPermission() {
         try {
             if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
@@ -473,14 +491,14 @@
     function checkAlarms() {
         const now = Date.now();
         let updated = false;
-        let alarmTexts = []; // 新增：收集同時觸發的鬧鐘文字
+        let alarmTexts = []; 
 
         tasks.forEach(task => {
             if (!task.isCompleted && task.dueDate && task.hasTime && task.reminderEnabled !== false && !task.notified) {
                 if (now >= task.dueDate) {
                     task.notified = true;
                     updated = true;
-                    alarmTexts.push(task.text); // 加入提示清單
+                    alarmTexts.push(task.text); 
                     
                     try {
                         if ("Notification" in window && Notification.permission === "granted") {
@@ -490,7 +508,6 @@
                                 vibrate: [200, 100, 200]
                             };
                             
-                            // 手機版 PWA (尤其是 Android) 必須使用 Service Worker 才能觸發系統通知
                             if (navigator.serviceWorker) {
                                 navigator.serviceWorker.getRegistration().then(function(reg) {
                                     if (reg) {
