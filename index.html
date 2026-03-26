@@ -447,17 +447,21 @@
 
     function saveTasks() { localStorage.setItem('catTasks', JSON.stringify(tasks)); }
 
+    let toastTimeout; // 新增：用於控制 Toast 的計時器，避免多次呼叫衝突
     function showCatToast(msg) {
         const toast = document.getElementById('cat-toast');
         toast.innerHTML = `<i class="ph-fill ph-cat text-3xl text-pink-500"></i> <span class="text-gray-800 leading-snug">${msg}</span>`;
         toast.classList.remove('opacity-0', 'scale-95', 'pointer-events-none');
         toast.classList.add('opacity-100', 'scale-100', '-translate-y-2');
-        setTimeout(() => {
+        
+        if (toastTimeout) clearTimeout(toastTimeout); // 清除前一個計時器
+        toastTimeout = setTimeout(() => {
             toast.classList.remove('opacity-100', 'scale-100', '-translate-y-2');
             toast.classList.add('opacity-0', 'scale-95', 'pointer-events-none');
         }, 3500);
     }
 
+    function requestNotificationPermission() {
     function requestNotificationPermission() {
         try {
             if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
@@ -469,21 +473,50 @@
     function checkAlarms() {
         const now = Date.now();
         let updated = false;
+        let alarmTexts = []; // 新增：收集同時觸發的鬧鐘文字
+
         tasks.forEach(task => {
             if (!task.isCompleted && task.dueDate && task.hasTime && task.reminderEnabled !== false && !task.notified) {
                 if (now >= task.dueDate) {
                     task.notified = true;
                     updated = true;
-                    showCatToast(`⏰ 叮咚！時間到囉喵：<br>${task.text}`);
+                    alarmTexts.push(task.text); // 加入提示清單
+                    
                     try {
                         if ("Notification" in window && Notification.permission === "granted") {
-                            new Notification("🐱 貓咪鬧鐘提醒喵！", { body: task.text });
+                            const notifyOptions = { 
+                                body: task.text,
+                                icon: "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐱</text></svg>",
+                                vibrate: [200, 100, 200]
+                            };
+                            
+                            // 手機版 PWA (尤其是 Android) 必須使用 Service Worker 才能觸發系統通知
+                            if (navigator.serviceWorker) {
+                                navigator.serviceWorker.getRegistration().then(function(reg) {
+                                    if (reg) {
+                                        reg.showNotification("🐱 貓咪鬧鐘提醒喵！", notifyOptions);
+                                    } else {
+                                        new Notification("🐱 貓咪鬧鐘提醒喵！", notifyOptions);
+                                    }
+                                }).catch(function() {
+                                    new Notification("🐱 貓咪鬧鐘提醒喵！", notifyOptions);
+                                });
+                            } else {
+                                new Notification("🐱 貓咪鬧鐘提醒喵！", notifyOptions);
+                            }
                         }
-                    } catch(e){}
+                    } catch(e) { console.error('系統通知發送失敗', e); }
                 }
             }
         });
-        if (updated) { saveTasks(); renderTasks(); }
+        
+        if (updated) { 
+            if (alarmTexts.length > 0) {
+                showCatToast(`⏰ 叮咚！時間到囉喵：<br>${alarmTexts.join('<br>')}`);
+            }
+            saveTasks(); 
+            renderTasks(); 
+        }
     }
 
     function toggleReminder(id) {
