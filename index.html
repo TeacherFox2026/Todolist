@@ -257,6 +257,24 @@
             </div>
         </div>
     </div>
+
+    <!-- 手機背景鬧鐘限制提示 Modal (新增) -->
+    <div id="alarm-warning-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="doodle-box bg-white p-6 max-w-sm w-full relative">
+            <button onclick="closeAlarmWarningModal()" class="absolute top-3 right-3 text-gray-800 text-2xl hover:scale-110 transition"><i class="ph-bold ph-x"></i></button>
+            <h3 class="text-xl font-bold text-center text-gray-800 mb-4 flex justify-center items-center gap-2">
+                <i class="ph-bold ph-warning-circle text-orange-500"></i> 手機省電限制喵
+            </h3>
+            <div class="space-y-3 text-gray-700 text-sm font-bold leading-relaxed">
+                <p>手機系統為了極致省電，當您<span class="text-red-500">完全關閉 App</span> 後，網頁的自動提醒可能會被系統強制攔截 😿</p>
+                <p class="bg-yellow-100 p-3 border-2 border-dashed border-gray-400 transform rotate-1 shadow-sm">
+                    💡 <span class="text-pink-600 font-extrabold">100% 準時解法：</span><br>
+                    強烈建議您點擊記事卡片右側的 <strong>「⏰ 時鐘圖示」</strong>，將鬧鐘一鍵寫入您的【手機內建行事曆】。這是關閉 App 後唯一保證準時響鈴的方法喵！🐾
+                </p>
+            </div>
+            <button onclick="closeAlarmWarningModal()" class="mt-6 w-full doodle-btn bg-pink-300 text-gray-800 font-bold py-2.5 hover:bg-pink-400 transition">我知道了喵！</button>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -432,7 +450,7 @@
     function scheduleBackgroundNotification(task) {
         if (!('Notification' in window) || !navigator.serviceWorker) return;
         
-        // 檢查是否支援 Notification Triggers API (Android Chrome 支援，可在 App 關閉時喚醒)
+        // 檢查是否支援 Notification Triggers API
         if ('showTrigger' in Notification.prototype && 'TimestampTrigger' in window) {
             navigator.serviceWorker.ready.then(reg => {
                 reg.showNotification("🐱 貓咪鬧鐘提醒喵！", {
@@ -443,15 +461,21 @@
                     showTrigger: new TimestampTrigger(task.dueDate)
                 }).catch(e => console.log('背景通知排程失敗', e));
             });
-        } else {
-            // iOS Safari 或不支援的瀏覽器，提示使用者使用行事曆功能
-            setTimeout(() => {
-                if (!localStorage.getItem('bg_warned')) {
-                    showCatToast("💡 若要關閉網頁時也響鈴，建議點擊 ⏰ 寫入系統鬧鐘喵！");
-                    localStorage.setItem('bg_warned', 'true');
-                }
-            }, 3500); 
         }
+        
+        // 針對手機端，顯示強烈提示 Modal (因為大部分手機的省電模式仍會殺死背景網頁計時器)
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        if (isMobile && !localStorage.getItem('mobile_alarm_warned_v2')) {
+            setTimeout(() => {
+                document.getElementById('alarm-warning-modal').classList.remove('hidden');
+                localStorage.setItem('mobile_alarm_warned_v2', 'true');
+            }, 800);
+        }
+    }
+
+    // 關閉提示 Modal
+    function closeAlarmWarningModal() {
+        document.getElementById('alarm-warning-modal').classList.add('hidden');
     }
 
     function cancelBackgroundNotification(taskId) {
