@@ -109,10 +109,12 @@
         <!-- 新增記事區塊 -->
         <section class="doodle-box bg-white p-3">
             <div class="flex items-center gap-2 mb-3 relative">
+                <!-- 加入 onkeypress 支援 Enter 鍵送出 -->
                 <input type="text" id="task-input" placeholder="有什麼事要記下來喵？🐾" 
-                       class="w-full doodle-input py-2 pl-2 pr-[4.5rem] focus:ring-0 outline-none text-base text-gray-700">
+                       class="w-full doodle-input py-2 pl-2 pr-[4.5rem] focus:ring-0 outline-none text-base text-gray-700"
+                       onkeypress="if(event.key === 'Enter') addTask()">
                 
-                <!-- 新增：隱藏的日期時間選擇器 (疊在圖示上，移到麥克風左邊) -->
+                <!-- 隱藏的日期時間選擇器 (疊在圖示上，移到麥克風左邊) -->
                 <div class="absolute right-10 flex items-center justify-center w-8 h-8 text-gray-400 hover:text-pink-500 transition cursor-pointer" title="設定提醒時間">
                     <i id="task-datetime-icon" class="ph-bold ph-calendar-plus text-xl"></i>
                     <input type="datetime-local" id="task-datetime" onchange="updateDatetimeIcon('task-datetime', 'task-datetime-icon')" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
@@ -198,7 +200,7 @@
         </div>
     </div>
 
-    <!-- 修改記事 Modal (加入時間修改功能) -->
+    <!-- 修改記事 Modal -->
     <div id="edit-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
         <div class="doodle-box bg-white p-6 max-w-sm w-full relative">
             <h3 class="text-lg font-bold text-center text-gray-800 mb-4 flex justify-center items-center gap-2 bg-yellow-200 mx-auto w-max px-3 border border-gray-800 transform rotate-1">
@@ -263,8 +265,15 @@
 </div>
 
 <script>
-    // --- 1. 資料與狀態管理 ---
-    let tasks = JSON.parse(localStorage.getItem('catTasks')) || [];
+    // --- 1. 資料與狀態管理 (加入陣列防護) ---
+    let tasks = [];
+    try {
+        const parsed = JSON.parse(localStorage.getItem('catTasks'));
+        if (Array.isArray(parsed)) tasks = parsed;
+    } catch (e) {
+        console.error('LocalStorage 讀取失敗', e);
+    }
+    
     let expandedState = { urgent: false, slow: false, completed: false };
     let expandedTextSet = new Set();
     let deferredPrompt;
@@ -272,7 +281,7 @@
     const catEncouragements = [ "你太棒了喵！🐾", "做的好！獎勵一個罐罐喵~🐟", "喵星人為你驕傲！✨", "太神啦！貓貓崇拜你喵🙀" ];
     const catUncheckEncouragements = [ "沒關係喵，我們重新再來！🐾", "本喵陪你一起重新挑戰喵！💪", "休息一下再出發喵！☕", "不急不急，慢慢來喵~🐢" ];
 
-    // --- 圖示更新：有選時間時改變日曆顏色 ---
+    // --- 圖示更新 ---
     function updateDatetimeIcon(inputId, iconId) {
         const val = document.getElementById(inputId).value;
         const icon = document.getElementById(iconId);
@@ -287,7 +296,7 @@
         }
     }
 
-    // --- 格式化本地時間供 datetime-local 使用 ---
+    // --- 時間格式化 ---
     function formatForDatetimeLocal(timestamp) {
         if (!timestamp) return '';
         const d = new Date(timestamp);
@@ -301,28 +310,14 @@
         if (!task || !task.dueDate) return alert('這筆記事沒有設定時間喵！🙀');
 
         const startDate = new Date(task.dueDate);
-        const endDate = new Date(task.dueDate + 60 * 60 * 1000); // 預設 1 小時長度
+        const endDate = new Date(task.dueDate + 60 * 60 * 1000); 
 
-        // 轉換為 iCalendar 本地時間格式 (不帶 Z，讓手機以當地時區判斷)
         const formatICSDate = (date) => {
             const pad = (n) => n < 10 ? '0' + n : n;
             return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}T${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
         };
 
-        const icsContent = `BEGIN:VCALENDAR
-VERSION:2.0
-BEGIN:VEVENT
-DTSTART:${formatICSDate(startDate)}
-DTEND:${formatICSDate(endDate)}
-SUMMARY:🐱 ${task.text}
-DESCRIPTION:貓咪記事本的專屬提醒喵🐾
-BEGIN:VALARM
-TRIGGER:-PT0M
-ACTION:DISPLAY
-DESCRIPTION:Reminder
-END:VALARM
-END:VEVENT
-END:VCALENDAR`;
+        const icsContent = `BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nDTSTART:${formatICSDate(startDate)}\nDTEND:${formatICSDate(endDate)}\nSUMMARY:🐱 ${task.text}\nDESCRIPTION:貓咪記事本的專屬提醒喵🐾\nBEGIN:VALARM\nTRIGGER:-PT0M\nACTION:DISPLAY\nDESCRIPTION:Reminder\nEND:VALARM\nEND:VEVENT\nEND:VCALENDAR`;
 
         const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
         const url = URL.createObjectURL(blob);
@@ -335,12 +330,86 @@ END:VCALENDAR`;
         URL.revokeObjectURL(url);
     }
 
+    // --- 核心：智能萃取文字中的日期與時間 (簡易 NLP) 增加防錯 ---
+    function extractDateFromText(text) {
+        try {
+            const now = new Date();
+            let targetDate = null;
+            let hasTime = false;
+
+            if (text.includes("今天")) { targetDate = new Date(); }
+            else if (text.includes("明天")) { targetDate = new Date(now); targetDate.setDate(now.getDate() + 1); }
+            else if (text.includes("後天")) { targetDate = new Date(now); targetDate.setDate(now.getDate() + 2); }
+            else if (text.includes("大後天")) { targetDate = new Date(now); targetDate.setDate(now.getDate() + 3); }
+            
+            if (!targetDate) {
+                const weekMatch = text.match(/(下週|下星期|星期|週|禮拜)([一二三四五六日天])/);
+                if (weekMatch) {
+                    const dayMap = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0 };
+                    const targetDay = dayMap[weekMatch[2]];
+                    const currentDay = now.getDay();
+                    let daysToAdd = targetDay - currentDay;
+                    if (daysToAdd <= 0 || weekMatch[1].includes("下")) { daysToAdd += 7; }
+                    targetDate = new Date(now);
+                    targetDate.setDate(now.getDate() + daysToAdd);
+                }
+            }
+
+            if (!targetDate) {
+                const dateMatch = text.match(/(\d{1,2})\s*[月/]\s*(\d{1,2})\s*(日|號)?/);
+                if (dateMatch) {
+                    const month = parseInt(dateMatch[1]) - 1; 
+                    const day = parseInt(dateMatch[2]);
+                    targetDate = new Date(now.getFullYear(), month, day);
+                    if (targetDate.getTime() < new Date(now.setHours(0,0,0,0)).getTime()) {
+                        targetDate.setFullYear(targetDate.getFullYear() + 1);
+                    }
+                }
+            }
+
+            const timeMatch = text.match(/(凌晨|早上|上午|中午|下午|晚上)?\s*(\d{1,2})\s*(?:點|時|:)\s*(半|\d{1,2}分?)?/);
+            if (timeMatch) {
+                let period = timeMatch[1];
+                let hour = parseInt(timeMatch[2]);
+                let minuteStr = timeMatch[3];
+                let minute = 0;
+
+                if (minuteStr === '半') minute = 30;
+                else if (minuteStr) minute = parseInt(minuteStr.replace('分', ''));
+
+                if (period) {
+                    if ((period === '下午' || period === '晚上') && hour < 12) hour += 12;
+                    else if ((period === '凌晨' || period === '早上' || period === '上午') && hour === 12) hour = 0;
+                }
+
+                if (!targetDate) targetDate = new Date();
+                targetDate.setHours(hour, minute, 0, 0);
+                hasTime = true;
+            }
+
+            if (targetDate) {
+                if (!hasTime) targetDate.setHours(23, 59, 59, 999); 
+                
+                let formatted = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
+                if (hasTime) {
+                    let h = targetDate.getHours().toString().padStart(2, '0');
+                    let m = targetDate.getMinutes().toString().padStart(2, '0');
+                    formatted += ` ${h}:${m}`;
+                }
+                return { timestamp: targetDate.getTime(), formatted: formatted, hasTime: hasTime };
+            }
+        } catch (error) {
+            console.error("NLP 解析錯誤", error);
+        }
+        return null;
+    }
+
     // --- 初始化 ---
     document.addEventListener('DOMContentLoaded', () => {
         renderTasks();
         setupPWA();
         checkInstallState(); 
-        setInterval(checkAlarms, 10000); // 內部 Web Notification 雙重保險
+        setInterval(checkAlarms, 10000); 
     });
 
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -390,9 +459,11 @@ END:VCALENDAR`;
     }
 
     function requestNotificationPermission() {
-        if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
-            Notification.requestPermission();
-        }
+        try {
+            if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
+                Notification.requestPermission().catch(e => console.log('通知權限取消', e));
+            }
+        } catch(e) { console.error('請求通知失敗', e); }
     }
 
     function checkAlarms() {
@@ -404,22 +475,23 @@ END:VCALENDAR`;
                     task.notified = true;
                     updated = true;
                     showCatToast(`⏰ 叮咚！時間到囉喵：<br>${task.text}`);
-                    if ("Notification" in window && Notification.permission === "granted") {
-                        new Notification("🐱 貓咪鬧鐘提醒喵！", { body: task.text });
-                    }
+                    try {
+                        if ("Notification" in window && Notification.permission === "granted") {
+                            new Notification("🐱 貓咪鬧鐘提醒喵！", { body: task.text });
+                        }
+                    } catch(e){}
                 }
             }
         });
         if (updated) { saveTasks(); renderTasks(); }
     }
 
-    // --- 快速切換提醒開關 ---
     function toggleReminder(id) {
         const task = tasks.find(t => String(t.id) === String(id));
         if (task && task.hasTime) {
             task.reminderEnabled = task.reminderEnabled === false ? true : false;
             if (task.reminderEnabled) {
-                task.notified = false; // 重新開啟時，重置提醒狀態
+                task.notified = false; 
                 requestNotificationPermission();
                 showCatToast("開啟提醒喵！🔔");
             } else {
@@ -430,58 +502,66 @@ END:VCALENDAR`;
         }
     }
 
-    // --- 記事操作 (完美結合手動選擇與自動辨識) ---
+    // --- 記事操作 (強效防呆版，保證寫下來不卡關) ---
     function addTask() {
-        const input = document.getElementById('task-input');
-        const text = input.value.trim();
-        if (!text) return alert('請輸入記事內容喵！🐾');
+        try {
+            const input = document.getElementById('task-input');
+            const text = input.value.trim();
+            if (!text) return alert('請輸入記事內容喵！🐾');
 
-        const tag = document.querySelector('input[name="task-tag"]:checked').value;
-        const datetimeVal = document.getElementById('task-datetime').value;
-        
-        let dueDate = null;
-        let dateText = null;
-        let hasTime = false;
+            // 確保標籤有被正確讀取，若無則預設為 urgent
+            const tagEl = document.querySelector('input[name="task-tag"]:checked');
+            const tag = tagEl ? tagEl.value : 'urgent';
+            
+            const datetimeInput = document.getElementById('task-datetime');
+            const datetimeVal = datetimeInput ? datetimeInput.value : '';
+            
+            let dueDate = null;
+            let dateText = null;
+            let hasTime = false;
 
-        // 階段 1：若使用者有「手動」選擇時間，優先採用
-        if (datetimeVal) {
-            const d = new Date(datetimeVal);
-            dueDate = d.getTime();
-            dateText = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
-            hasTime = true;
-            requestNotificationPermission();
-        } 
-        // 階段 2：若沒有手動選擇，則啟動「自動辨識 (NLP)」找尋文字中的日期
-        else {
-            const extracted = extractDateFromText(text);
-            if (extracted) {
-                dueDate = extracted.timestamp;
-                dateText = extracted.formatted;
-                hasTime = extracted.hasTime;
-                if (hasTime) requestNotificationPermission();
+            // 階段 1：若有手動選擇時間
+            if (datetimeVal) {
+                const d = new Date(datetimeVal);
+                dueDate = d.getTime();
+                dateText = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+                hasTime = true;
+                requestNotificationPermission();
+            } 
+            // 階段 2：若沒有手動選擇，啟動自動辨識
+            else {
+                const extracted = extractDateFromText(text);
+                if (extracted) {
+                    dueDate = extracted.timestamp;
+                    dateText = extracted.formatted;
+                    hasTime = extracted.hasTime;
+                    if (hasTime) requestNotificationPermission();
+                }
             }
-            // 階段 3：若以上皆無，代表是一般記事，維持 null 順利放行！
+
+            const newTask = {
+                id: Date.now().toString(),
+                text: text,
+                tag: tag,
+                isCompleted: false,
+                createdAt: Date.now(),
+                dueDate: dueDate,
+                dateText: dateText,
+                hasTime: hasTime,
+                reminderEnabled: true,
+                notified: false
+            };
+
+            tasks.push(newTask);
+            saveTasks();
+            input.value = ''; 
+            if (datetimeInput) datetimeInput.value = ''; 
+            updateDatetimeIcon('task-datetime', 'task-datetime-icon'); 
+            renderTasks();
+        } catch (error) {
+            console.error("寫下來的過程發生錯誤", error);
+            alert("新增失敗，請再試一次喵！🐾");
         }
-
-        const newTask = {
-            id: Date.now().toString(),
-            text: text,
-            tag: tag,
-            isCompleted: false,
-            createdAt: Date.now(),
-            dueDate: dueDate,
-            dateText: dateText,
-            hasTime: hasTime,
-            reminderEnabled: true, // 預設開啟提醒
-            notified: false
-        };
-
-        tasks.push(newTask);
-        saveTasks();
-        input.value = ''; 
-        document.getElementById('task-datetime').value = ''; // 清空時間
-        updateDatetimeIcon('task-datetime', 'task-datetime-icon'); // 重置圖示
-        renderTasks();
     }
 
     function deleteTask(id) {
@@ -505,7 +585,6 @@ END:VCALENDAR`;
         document.getElementById('edit-task-id').value = task.id;
         document.getElementById('edit-task-input').value = task.text;
         
-        // 將儲存的 Timestamp 轉回 datetime-local 可讀的格式
         document.getElementById('edit-task-datetime').value = task.dueDate ? formatForDatetimeLocal(task.dueDate) : '';
         document.getElementById('edit-task-reminder').checked = task.reminderEnabled !== false;
         
@@ -515,45 +594,48 @@ END:VCALENDAR`;
     function closeEditModal() { document.getElementById('edit-modal').classList.add('hidden'); }
 
     function saveEditTask() {
-        const id = document.getElementById('edit-task-id').value;
-        const newText = document.getElementById('edit-task-input').value.trim();
-        const datetimeVal = document.getElementById('edit-task-datetime').value;
-        const reminderEnabled = document.getElementById('edit-task-reminder').checked;
+        try {
+            const id = document.getElementById('edit-task-id').value;
+            const newText = document.getElementById('edit-task-input').value.trim();
+            const datetimeVal = document.getElementById('edit-task-datetime').value;
+            const reminderEnabled = document.getElementById('edit-task-reminder').checked;
 
-        if (newText) {
-            const task = tasks.find(t => String(t.id) === String(id));
-            if (task) {
-                task.text = newText;
-                task.reminderEnabled = reminderEnabled;
-                
-                // 修改時也套用 3 階段智能判斷
-                if (datetimeVal) {
-                    const d = new Date(datetimeVal);
-                    task.dueDate = d.getTime();
-                    task.dateText = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
-                    task.hasTime = true;
-                    task.notified = false;
-                    if (task.reminderEnabled) requestNotificationPermission();
-                } else {
-                    const extracted = extractDateFromText(newText);
-                    if (extracted) {
-                        task.dueDate = extracted.timestamp;
-                        task.dateText = extracted.formatted;
-                        task.hasTime = extracted.hasTime;
+            if (newText) {
+                const task = tasks.find(t => String(t.id) === String(id));
+                if (task) {
+                    task.text = newText;
+                    task.reminderEnabled = reminderEnabled;
+                    
+                    if (datetimeVal) {
+                        const d = new Date(datetimeVal);
+                        task.dueDate = d.getTime();
+                        task.dateText = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+                        task.hasTime = true;
                         task.notified = false;
-                        if (task.hasTime && task.reminderEnabled) requestNotificationPermission();
+                        if (task.reminderEnabled) requestNotificationPermission();
                     } else {
-                        task.dueDate = null;
-                        task.dateText = null;
-                        task.hasTime = false;
+                        const extracted = extractDateFromText(newText);
+                        if (extracted) {
+                            task.dueDate = extracted.timestamp;
+                            task.dateText = extracted.formatted;
+                            task.hasTime = extracted.hasTime;
+                            task.notified = false;
+                            if (task.hasTime && task.reminderEnabled) requestNotificationPermission();
+                        } else {
+                            task.dueDate = null;
+                            task.dateText = null;
+                            task.hasTime = false;
+                        }
                     }
+                    
+                    saveTasks();
+                    renderTasks();
                 }
-                
-                saveTasks();
-                renderTasks();
             }
+            closeEditModal();
+        } catch (error) {
+            console.error("修改過程發生錯誤", error);
         }
-        closeEditModal();
     }
 
     function toggleComplete(id) {
@@ -629,7 +711,6 @@ END:VCALENDAR`;
                 
                 const colorClass = isOverdue ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-gray-800';
                 
-                // 允許點擊切換提醒開關
                 const badgeAttrs = (task.hasTime && !isOverdue)
                     ? `onclick="toggleReminder('${task.id}')" title="點擊切換提醒開關" class="cursor-pointer hover:scale-105 inline-block ${colorClass} text-[11px] font-bold px-1.5 py-0.5 rounded border border-gray-800 transform rotate-1 shadow-[1px_1px_0px_#1f2937] transition"`
                     : `class="inline-block ${colorClass} text-[11px] font-bold px-1.5 py-0.5 rounded border border-gray-800 transform rotate-1 shadow-[1px_1px_0px_#1f2937]"`;
@@ -637,13 +718,11 @@ END:VCALENDAR`;
                 dateBadge = `<span ${badgeAttrs}>${icon} ${task.dateText} ${statusText}</span>`;
             }
 
-            // 右側加入「匯出至系統鬧鐘」的專屬按鈕
             const nativeAlarmBtn = (task.dueDate && !task.isCompleted) 
                 ? `<button onclick="addToNativeCalendar('${task.id}')" class="text-gray-600 hover:text-green-500 transition p-0.5 hover:scale-110" title="寫入手機系統鬧鐘"><i class="ph-bold ph-alarm text-base sm:text-lg"></i></button>`
                 : '';
 
             li.innerHTML = `
-                <!-- 左欄：核取方塊與標籤 -->
                 <div class="flex flex-col items-center gap-1.5 flex-shrink-0 pt-0.5 w-[3.5rem]">
                     <input type="checkbox" onchange="toggleComplete('${task.id}')" ${task.isCompleted ? 'checked' : ''} class="w-5 h-5 m-0">
                     <div class="relative w-full">
@@ -657,7 +736,6 @@ END:VCALENDAR`;
                     </div>
                 </div>
 
-                <!-- 中欄：筆記內容與附屬標籤 -->
                 <div class="flex-1 min-w-0 flex flex-col justify-start">
                     <div id="text-${task.id}" class="font-bold break-words text-base sm:text-lg leading-snug ${task.isCompleted ? 'text-gray-400 line-through' : 'text-gray-800'} ${clampClass}">
                         ${task.text}
@@ -671,7 +749,6 @@ END:VCALENDAR`;
                     </div>
                 </div>
                 
-                <!-- 右欄：按鈕區 -->
                 <div class="flex flex-col items-center gap-1 flex-shrink-0 pt-0">
                     ${nativeAlarmBtn}
                     <button onclick="editTask('${task.id}')" class="text-gray-600 hover:text-blue-500 transition p-0.5 hover:scale-110" title="修改"><i class="ph-bold ph-pencil-simple text-base sm:text-lg"></i></button>
