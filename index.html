@@ -72,6 +72,11 @@
         .doodle-input { border-bottom: 2px dashed #9ca3af; background: transparent; }
         .doodle-input:focus { border-bottom: 2px solid #f472b6; }
 
+        /* 手動時間選擇器樣式 */
+        input[type="datetime-local"] {
+            font-family: inherit;
+        }
+
         .app-container { max-width: 480px; margin: 0 auto; min-height: 100vh; background: transparent; }
     </style>
 </head>
@@ -105,9 +110,16 @@
         <section class="doodle-box bg-white p-3">
             <div class="flex items-center gap-2 mb-3 relative">
                 <input type="text" id="task-input" placeholder="有什麼事要記下來喵？🐾" 
-                       class="w-full doodle-input py-2 px-2 focus:ring-0 outline-none text-base pr-10 text-gray-700">
-                <button onclick="startVoiceRecognition()" id="mic-btn" class="absolute right-0 text-xl p-1.5 hover:scale-110 transition flex items-center justify-center text-pink-500" title="語音輸入">
-                    <i class="ph-fill ph-microphone-stage"></i>
+                       class="w-full doodle-input py-2 pl-2 pr-[4.5rem] focus:ring-0 outline-none text-base text-gray-700">
+                
+                <!-- 新增：隱藏的日期時間選擇器 (疊在圖示上，移到麥克風左邊) -->
+                <div class="absolute right-10 flex items-center justify-center w-8 h-8 text-gray-400 hover:text-pink-500 transition cursor-pointer" title="設定提醒時間">
+                    <i id="task-datetime-icon" class="ph-bold ph-calendar-plus text-xl"></i>
+                    <input type="datetime-local" id="task-datetime" onchange="updateDatetimeIcon('task-datetime', 'task-datetime-icon')" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                </div>
+
+                <button onclick="startVoiceRecognition()" id="mic-btn" class="absolute right-1 w-8 h-8 flex items-center justify-center hover:scale-110 transition text-pink-500" title="語音輸入">
+                    <i class="ph-fill ph-microphone-stage text-xl"></i>
                 </button>
             </div>
             
@@ -186,13 +198,27 @@
         </div>
     </div>
 
-    <!-- 修改記事 Modal -->
+    <!-- 修改記事 Modal (加入時間修改功能) -->
     <div id="edit-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
         <div class="doodle-box bg-white p-6 max-w-sm w-full relative">
             <h3 class="text-lg font-bold text-center text-gray-800 mb-4 flex justify-center items-center gap-2 bg-yellow-200 mx-auto w-max px-3 border border-gray-800 transform rotate-1">
                 <i class="ph-bold ph-pencil-simple text-pink-500"></i> 修改塗鴉喵
             </h3>
-            <textarea id="edit-task-input" rows="3" placeholder="請輸入記事內容..." class="w-full doodle-item bg-gray-50 py-3 px-4 outline-none text-base mb-4 resize-none"></textarea>
+            
+            <textarea id="edit-task-input" rows="3" placeholder="請輸入記事內容..." class="w-full doodle-item bg-gray-50 py-3 px-4 outline-none text-base mb-3 resize-none"></textarea>
+            
+            <!-- 修改視窗的鬧鐘選擇器與提醒開關 -->
+            <div class="flex flex-col gap-3 mb-4 px-1">
+                <div class="flex items-center gap-2">
+                    <i class="ph-bold ph-alarm text-pink-400 text-lg flex-shrink-0"></i>
+                    <input type="datetime-local" id="edit-task-datetime" class="flex-1 doodle-input py-1 focus:ring-0 outline-none text-sm text-gray-600 bg-transparent">
+                </div>
+                <label class="flex items-center gap-2 cursor-pointer text-sm font-bold text-gray-700">
+                    <input type="checkbox" id="edit-task-reminder" class="w-4 h-4 m-0" checked>
+                    開啟時間提醒 (通知)
+                </label>
+            </div>
+
             <input type="hidden" id="edit-task-id">
             <div class="flex gap-3">
                 <button onclick="closeEditModal()" class="flex-1 doodle-btn bg-gray-200 text-gray-800 font-bold py-2 hover:bg-gray-300 transition">算了</button>
@@ -243,79 +269,70 @@
     let expandedTextSet = new Set();
     let deferredPrompt;
 
-    // 貓咪鼓勵語錄 (完成)
     const catEncouragements = [ "你太棒了喵！🐾", "做的好！獎勵一個罐罐喵~🐟", "喵星人為你驕傲！✨", "太神啦！貓貓崇拜你喵🙀" ];
-    // 貓咪鼓勵語錄 (取消打勾/重做)
     const catUncheckEncouragements = [ "沒關係喵，我們重新再來！🐾", "本喵陪你一起重新挑戰喵！💪", "休息一下再出發喵！☕", "不急不急，慢慢來喵~🐢" ];
 
-    // --- 核心：智能萃取文字中的日期與時間 (簡易 NLP) ---
-    function extractDateFromText(text) {
-        const now = new Date();
-        let targetDate = null;
-        let hasTime = false;
-
-        if (text.includes("今天")) { targetDate = new Date(); }
-        else if (text.includes("明天")) { targetDate = new Date(now); targetDate.setDate(now.getDate() + 1); }
-        else if (text.includes("後天")) { targetDate = new Date(now); targetDate.setDate(now.getDate() + 2); }
-        else if (text.includes("大後天")) { targetDate = new Date(now); targetDate.setDate(now.getDate() + 3); }
-        
-        if (!targetDate) {
-            const weekMatch = text.match(/(下週|下星期|星期|週|禮拜)([一二三四五六日天])/);
-            if (weekMatch) {
-                const dayMap = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0 };
-                const targetDay = dayMap[weekMatch[2]];
-                const currentDay = now.getDay();
-                let daysToAdd = targetDay - currentDay;
-                if (daysToAdd <= 0 || weekMatch[1].includes("下")) { daysToAdd += 7; }
-                targetDate = new Date(now);
-                targetDate.setDate(now.getDate() + daysToAdd);
+    // --- 圖示更新：有選時間時改變日曆顏色 ---
+    function updateDatetimeIcon(inputId, iconId) {
+        const val = document.getElementById(inputId).value;
+        const icon = document.getElementById(iconId);
+        if (icon) {
+            if (val) {
+                icon.classList.remove('ph-bold', 'ph-calendar-plus', 'text-gray-400');
+                icon.classList.add('ph-fill', 'ph-calendar-check', 'text-pink-500');
+            } else {
+                icon.classList.remove('ph-fill', 'ph-calendar-check', 'text-pink-500');
+                icon.classList.add('ph-bold', 'ph-calendar-plus', 'text-gray-400');
             }
         }
+    }
 
-        if (!targetDate) {
-            const dateMatch = text.match(/(\d{1,2})\s*[月/]\s*(\d{1,2})\s*(日|號)?/);
-            if (dateMatch) {
-                const month = parseInt(dateMatch[1]) - 1; 
-                const day = parseInt(dateMatch[2]);
-                targetDate = new Date(now.getFullYear(), month, day);
-                if (targetDate.getTime() < new Date(now.setHours(0,0,0,0)).getTime()) {
-                    targetDate.setFullYear(targetDate.getFullYear() + 1);
-                }
-            }
-        }
+    // --- 格式化本地時間供 datetime-local 使用 ---
+    function formatForDatetimeLocal(timestamp) {
+        if (!timestamp) return '';
+        const d = new Date(timestamp);
+        const tzOffset = d.getTimezoneOffset() * 60000;
+        return (new Date(d.getTime() - tzOffset)).toISOString().slice(0, 16);
+    }
 
-        const timeMatch = text.match(/(凌晨|早上|上午|中午|下午|晚上)?\s*(\d{1,2})\s*(?:點|時|:)\s*(半|\d{1,2}分?)?/);
-        if (timeMatch) {
-            let period = timeMatch[1];
-            let hour = parseInt(timeMatch[2]);
-            let minuteStr = timeMatch[3];
-            let minute = 0;
+    // --- 匯出原生行事曆與鬧鐘 (.ics 檔案) ---
+    function addToNativeCalendar(id) {
+        const task = tasks.find(t => String(t.id) === String(id));
+        if (!task || !task.dueDate) return alert('這筆記事沒有設定時間喵！🙀');
 
-            if (minuteStr === '半') minute = 30;
-            else if (minuteStr) minute = parseInt(minuteStr.replace('分', ''));
+        const startDate = new Date(task.dueDate);
+        const endDate = new Date(task.dueDate + 60 * 60 * 1000); // 預設 1 小時長度
 
-            if (period) {
-                if ((period === '下午' || period === '晚上') && hour < 12) hour += 12;
-                else if ((period === '凌晨' || period === '早上' || period === '上午') && hour === 12) hour = 0;
-            }
+        // 轉換為 iCalendar 本地時間格式 (不帶 Z，讓手機以當地時區判斷)
+        const formatICSDate = (date) => {
+            const pad = (n) => n < 10 ? '0' + n : n;
+            return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}T${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+        };
 
-            if (!targetDate) targetDate = new Date();
-            targetDate.setHours(hour, minute, 0, 0);
-            hasTime = true;
-        }
+        const icsContent = `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+DTSTART:${formatICSDate(startDate)}
+DTEND:${formatICSDate(endDate)}
+SUMMARY:🐱 ${task.text}
+DESCRIPTION:貓咪記事本的專屬提醒喵🐾
+BEGIN:VALARM
+TRIGGER:-PT0M
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+END:VALARM
+END:VEVENT
+END:VCALENDAR`;
 
-        if (targetDate) {
-            if (!hasTime) targetDate.setHours(23, 59, 59, 999); 
-            
-            let formatted = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
-            if (hasTime) {
-                let h = targetDate.getHours().toString().padStart(2, '0');
-                let m = targetDate.getMinutes().toString().padStart(2, '0');
-                formatted += ` ${h}:${m}`;
-            }
-            return { timestamp: targetDate.getTime(), formatted: formatted };
-        }
-        return null;
+        const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `cat-alarm-${task.id}.ics`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 
     // --- 初始化 ---
@@ -323,6 +340,7 @@
         renderTasks();
         setupPWA();
         checkInstallState(); 
+        setInterval(checkAlarms, 10000); // 內部 Web Notification 雙重保險
     });
 
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -365,21 +383,83 @@
         toast.innerHTML = `<i class="ph-fill ph-cat text-3xl text-pink-500"></i> <span class="text-gray-800 leading-snug">${msg}</span>`;
         toast.classList.remove('opacity-0', 'scale-95', 'pointer-events-none');
         toast.classList.add('opacity-100', 'scale-100', '-translate-y-2');
-        
         setTimeout(() => {
             toast.classList.remove('opacity-100', 'scale-100', '-translate-y-2');
             toast.classList.add('opacity-0', 'scale-95', 'pointer-events-none');
         }, 3500);
     }
 
-    // --- 記事操作 ---
+    function requestNotificationPermission() {
+        if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
+            Notification.requestPermission();
+        }
+    }
+
+    function checkAlarms() {
+        const now = Date.now();
+        let updated = false;
+        tasks.forEach(task => {
+            if (!task.isCompleted && task.dueDate && task.hasTime && task.reminderEnabled !== false && !task.notified) {
+                if (now >= task.dueDate) {
+                    task.notified = true;
+                    updated = true;
+                    showCatToast(`⏰ 叮咚！時間到囉喵：<br>${task.text}`);
+                    if ("Notification" in window && Notification.permission === "granted") {
+                        new Notification("🐱 貓咪鬧鐘提醒喵！", { body: task.text });
+                    }
+                }
+            }
+        });
+        if (updated) { saveTasks(); renderTasks(); }
+    }
+
+    // --- 快速切換提醒開關 ---
+    function toggleReminder(id) {
+        const task = tasks.find(t => String(t.id) === String(id));
+        if (task && task.hasTime) {
+            task.reminderEnabled = task.reminderEnabled === false ? true : false;
+            if (task.reminderEnabled) {
+                task.notified = false; // 重新開啟時，重置提醒狀態
+                requestNotificationPermission();
+                showCatToast("開啟提醒喵！🔔");
+            } else {
+                showCatToast("已關閉提醒喵！🔕");
+            }
+            saveTasks();
+            renderTasks();
+        }
+    }
+
+    // --- 記事操作 (改為純手動讀取時間選擇器) ---
     function addTask() {
         const input = document.getElementById('task-input');
         const text = input.value.trim();
         if (!text) return alert('請輸入記事內容喵！🐾');
 
         const tag = document.querySelector('input[name="task-tag"]:checked').value;
-        const extractedDateInfo = extractDateFromText(text);
+        const datetimeVal = document.getElementById('task-datetime').value;
+        
+        let dueDate = null;
+        let dateText = null;
+        let hasTime = false;
+
+        // 若使用者有手動選擇時間
+        if (datetimeVal) {
+            const d = new Date(datetimeVal);
+            dueDate = d.getTime();
+            dateText = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+            hasTime = true;
+            requestNotificationPermission();
+        } else {
+            // 結合自動 NLP 解析日期
+            const extracted = extractDateFromText(text);
+            if (extracted) {
+                dueDate = extracted.timestamp;
+                dateText = extracted.formatted;
+                hasTime = extracted.hasTime;
+                if (hasTime) requestNotificationPermission();
+            }
+        }
 
         const newTask = {
             id: Date.now().toString(),
@@ -387,28 +467,28 @@
             tag: tag,
             isCompleted: false,
             createdAt: Date.now(),
-            dueDate: extractedDateInfo ? extractedDateInfo.timestamp : null,
-            dateText: extractedDateInfo ? extractedDateInfo.formatted : null
+            dueDate: dueDate,
+            dateText: dateText,
+            hasTime: hasTime,
+            reminderEnabled: true, // 預設開啟提醒
+            notified: false
         };
 
         tasks.push(newTask);
         saveTasks();
         input.value = ''; 
+        document.getElementById('task-datetime').value = ''; // 清空時間
+        updateDatetimeIcon('task-datetime', 'task-datetime-icon'); // 重置圖示
         renderTasks();
     }
 
-    // 觸發刪除確認視窗
     function deleteTask(id) {
         document.getElementById('delete-task-id').value = id;
         document.getElementById('delete-modal').classList.remove('hidden');
     }
 
-    // 關閉刪除確認視窗
-    function closeDeleteModal() {
-        document.getElementById('delete-modal').classList.add('hidden');
-    }
+    function closeDeleteModal() { document.getElementById('delete-modal').classList.add('hidden'); }
 
-    // 確認執行刪除
     function confirmDeleteTask() {
         const id = document.getElementById('delete-task-id').value;
         tasks = tasks.filter(t => String(t.id) !== String(id));
@@ -422,6 +502,11 @@
         if (!task) return;
         document.getElementById('edit-task-id').value = task.id;
         document.getElementById('edit-task-input').value = task.text;
+        
+        // 將儲存的 Timestamp 轉回 datetime-local 可讀的格式
+        document.getElementById('edit-task-datetime').value = task.dueDate ? formatForDatetimeLocal(task.dueDate) : '';
+        document.getElementById('edit-task-reminder').checked = task.reminderEnabled !== false;
+        
         document.getElementById('edit-modal').classList.remove('hidden');
     }
 
@@ -430,13 +515,37 @@
     function saveEditTask() {
         const id = document.getElementById('edit-task-id').value;
         const newText = document.getElementById('edit-task-input').value.trim();
+        const datetimeVal = document.getElementById('edit-task-datetime').value;
+        const reminderEnabled = document.getElementById('edit-task-reminder').checked;
+
         if (newText) {
             const task = tasks.find(t => String(t.id) === String(id));
             if (task) {
                 task.text = newText;
-                const extractedDateInfo = extractDateFromText(newText);
-                task.dueDate = extractedDateInfo ? extractedDateInfo.timestamp : null;
-                task.dateText = extractedDateInfo ? extractedDateInfo.formatted : null;
+                task.reminderEnabled = reminderEnabled;
+                
+                if (datetimeVal) {
+                    const d = new Date(datetimeVal);
+                    task.dueDate = d.getTime();
+                    task.dateText = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+                    task.hasTime = true;
+                    task.notified = false;
+                    if (task.reminderEnabled) requestNotificationPermission();
+                } else {
+                    const extracted = extractDateFromText(newText);
+                    if (extracted) {
+                        task.dueDate = extracted.timestamp;
+                        task.dateText = extracted.formatted;
+                        task.hasTime = extracted.hasTime;
+                        task.notified = false;
+                        if (task.hasTime && task.reminderEnabled) requestNotificationPermission();
+                    } else {
+                        task.dueDate = null;
+                        task.dateText = null;
+                        task.hasTime = false;
+                    }
+                }
+                
                 saveTasks();
                 renderTasks();
             }
@@ -492,12 +601,43 @@
             const isTextExpanded = expandedTextSet.has(task.id);
             const clampClass = isTextExpanded ? '' : 'line-clamp-2';
 
-            // 準備日期標籤
             let dateBadge = '';
             if (task.dateText && !task.isCompleted) {
-                // 移除原有的 mt-1，將由 flex 容器處理間距
-                dateBadge = `<span class="inline-block bg-yellow-100 text-gray-800 text-[11px] font-bold px-1.5 py-0.5 rounded border border-gray-800 transform rotate-1 shadow-[1px_1px_0px_#1f2937]">📅 ${task.dateText} 期限</span>`;
+                const isOverdue = task.dueDate && Date.now() >= task.dueDate;
+                const reminderEnabled = task.reminderEnabled !== false;
+                const isAlarmActive = task.hasTime && reminderEnabled && !task.notified && !isOverdue;
+                const isAlarmOff = task.hasTime && !reminderEnabled && !isOverdue;
+                
+                let icon = '📅';
+                let statusText = '期限';
+                
+                if (task.hasTime) {
+                    if (isAlarmActive) {
+                        icon = '🔔';
+                        statusText = '提醒';
+                    } else if (isAlarmOff) {
+                        icon = '🔕';
+                        statusText = '無提醒';
+                    } else if (task.notified) {
+                        icon = '📅';
+                        statusText = '已提醒';
+                    }
+                }
+                
+                const colorClass = isOverdue ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-gray-800';
+                
+                // 允許點擊切換提醒開關
+                const badgeAttrs = (task.hasTime && !isOverdue)
+                    ? `onclick="toggleReminder('${task.id}')" title="點擊切換提醒開關" class="cursor-pointer hover:scale-105 inline-block ${colorClass} text-[11px] font-bold px-1.5 py-0.5 rounded border border-gray-800 transform rotate-1 shadow-[1px_1px_0px_#1f2937] transition"`
+                    : `class="inline-block ${colorClass} text-[11px] font-bold px-1.5 py-0.5 rounded border border-gray-800 transform rotate-1 shadow-[1px_1px_0px_#1f2937]"`;
+                
+                dateBadge = `<span ${badgeAttrs}>${icon} ${task.dateText} ${statusText}</span>`;
             }
+
+            // 右側加入「匯出至系統鬧鐘」的專屬按鈕
+            const nativeAlarmBtn = (task.dueDate && !task.isCompleted) 
+                ? `<button onclick="addToNativeCalendar('${task.id}')" class="text-gray-600 hover:text-green-500 transition p-0.5 hover:scale-110" title="寫入手機系統鬧鐘"><i class="ph-bold ph-alarm text-base sm:text-lg"></i></button>`
+                : '';
 
             li.innerHTML = `
                 <!-- 左欄：核取方塊與標籤 -->
@@ -514,13 +654,12 @@
                     </div>
                 </div>
 
-                <!-- 中欄：筆記內容與附屬標籤(整合至同一排) -->
+                <!-- 中欄：筆記內容與附屬標籤 -->
                 <div class="flex-1 min-w-0 flex flex-col justify-start">
                     <div id="text-${task.id}" class="font-bold break-words text-base sm:text-lg leading-snug ${task.isCompleted ? 'text-gray-400 line-through' : 'text-gray-800'} ${clampClass}">
                         ${task.text}
                     </div>
                     
-                    <!-- 將「顯示更多」與「日期標籤」裝進同一個彈性容器，確保排在同一排 -->
                     <div class="flex items-center flex-wrap gap-2 mt-1">
                         <button id="more-btn-${task.id}" onclick="toggleTextExpand('${task.id}')" class="hidden shrink-0 text-left text-[11px] font-extrabold text-pink-500 hover:text-pink-600 w-max tracking-wide bg-yellow-100 px-1 border border-gray-800 transform -rotate-1">
                             ${isTextExpanded ? '收起 🔼' : '顯示更多 🔽'}
@@ -531,8 +670,8 @@
                 
                 <!-- 右欄：按鈕區 -->
                 <div class="flex flex-col items-center gap-1 flex-shrink-0 pt-0">
+                    ${nativeAlarmBtn}
                     <button onclick="editTask('${task.id}')" class="text-gray-600 hover:text-blue-500 transition p-0.5 hover:scale-110" title="修改"><i class="ph-bold ph-pencil-simple text-base sm:text-lg"></i></button>
-                    <!-- 改為觸發確認刪除視窗 -->
                     <button onclick="deleteTask('${task.id}')" class="text-gray-600 hover:text-red-500 transition p-0.5 hover:scale-110" title="刪除"><i class="ph-bold ph-trash text-base sm:text-lg"></i></button>
                 </div>
             `;
@@ -619,7 +758,8 @@
     // --- Modal 與 PWA ---
     function openDataModal() { document.getElementById('data-modal').classList.remove('hidden'); }
     function closeDataModal() { document.getElementById('data-modal').classList.add('hidden'); }
-    function exportData() { /* 保持原功能 */
+    
+    function exportData() {
         if (tasks.length === 0) return alert('目前沒有記事可以匯出喵！');
         const dataStr = JSON.stringify(tasks, null, 2);
         const blob = new Blob([dataStr], { type: 'application/json' });
@@ -633,7 +773,8 @@
         URL.revokeObjectURL(url);
         closeDataModal();
     }
-    function importData(event) { /* 保持原功能 */
+    
+    function importData(event) {
         const file = event.target.files[0];
         if (!file) return;
 
@@ -689,5 +830,3 @@
 
 </body>
 </html>
-
-
