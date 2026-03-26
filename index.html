@@ -430,7 +430,7 @@ END:VCALENDAR`;
         }
     }
 
-    // --- 記事操作 (改為純手動讀取時間選擇器) ---
+    // --- 記事操作 (完美結合手動選擇與自動辨識) ---
     function addTask() {
         const input = document.getElementById('task-input');
         const text = input.value.trim();
@@ -443,15 +443,16 @@ END:VCALENDAR`;
         let dateText = null;
         let hasTime = false;
 
-        // 若使用者有手動選擇時間
+        // 階段 1：若使用者有「手動」選擇時間，優先採用
         if (datetimeVal) {
             const d = new Date(datetimeVal);
             dueDate = d.getTime();
             dateText = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
             hasTime = true;
             requestNotificationPermission();
-        } else {
-            // 結合自動 NLP 解析日期
+        } 
+        // 階段 2：若沒有手動選擇，則啟動「自動辨識 (NLP)」找尋文字中的日期
+        else {
             const extracted = extractDateFromText(text);
             if (extracted) {
                 dueDate = extracted.timestamp;
@@ -459,6 +460,7 @@ END:VCALENDAR`;
                 hasTime = extracted.hasTime;
                 if (hasTime) requestNotificationPermission();
             }
+            // 階段 3：若以上皆無，代表是一般記事，維持 null 順利放行！
         }
 
         const newTask = {
@@ -524,6 +526,7 @@ END:VCALENDAR`;
                 task.text = newText;
                 task.reminderEnabled = reminderEnabled;
                 
+                // 修改時也套用 3 階段智能判斷
                 if (datetimeVal) {
                     const d = new Date(datetimeVal);
                     task.dueDate = d.getTime();
