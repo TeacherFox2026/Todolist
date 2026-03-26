@@ -258,7 +258,7 @@
         </div>
     </div>
 
-    <!-- 手機背景鬧鐘限制提示 Modal (新增) -->
+    <!-- 手機背景鬧鐘限制提示 Modal -->
     <div id="alarm-warning-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
         <div class="doodle-box bg-white p-6 max-w-sm w-full relative">
             <button onclick="closeAlarmWarningModal()" class="absolute top-3 right-3 text-gray-800 text-2xl hover:scale-110 transition"><i class="ph-bold ph-x"></i></button>
@@ -278,20 +278,25 @@
 </div>
 
 <script>
-    // --- 1. 資料與狀態管理 (加入陣列防護與舊版資料相容機制) ---
+    // ==========================================
+    // 1. 資料與狀態初始化
+    // ==========================================
     let tasks = [];
     try {
-        const parsed = JSON.parse(localStorage.getItem('catTasks'));
-        if (Array.isArray(parsed)) {
-            let needsMigration = false;
-            tasks = parsed.map(t => {
-                if (t.tag === 'normal') { t.tag = 'slow'; needsMigration = true; }
-                if (t.isCompleted === undefined) { t.isCompleted = false; needsMigration = true; }
-                if (t.reminderEnabled === undefined) { t.reminderEnabled = true; needsMigration = true; }
-                if (typeof t.id === 'number') { t.id = String(t.id); needsMigration = true; }
-                return t;
-            });
-            if (needsMigration) localStorage.setItem('catTasks', JSON.stringify(tasks));
+        const lsData = localStorage.getItem('catTasks');
+        if (lsData) {
+            const parsed = JSON.parse(lsData);
+            if (Array.isArray(parsed)) {
+                let needsMigration = false;
+                tasks = parsed.map(t => {
+                    if (t.tag === 'normal') { t.tag = 'slow'; needsMigration = true; }
+                    if (t.isCompleted === undefined) { t.isCompleted = false; needsMigration = true; }
+                    if (t.reminderEnabled === undefined) { t.reminderEnabled = true; needsMigration = true; }
+                    if (typeof t.id === 'number') { t.id = String(t.id); needsMigration = true; }
+                    return t;
+                });
+                if (needsMigration) localStorage.setItem('catTasks', JSON.stringify(tasks));
+            }
         }
     } catch (e) {
         console.error('LocalStorage 讀取失敗', e);
@@ -303,6 +308,27 @@
 
     const catEncouragements = [ "你太棒了喵！🐾", "做的好！獎勵一個罐罐喵~🐟", "喵星人為你驕傲！✨", "太神啦！貓貓崇拜你喵🙀" ];
     const catUncheckEncouragements = [ "沒關係喵，我們重新再來！🐾", "本喵陪你一起重新挑戰喵！💪", "休息一下再出發喵！☕", "不急不急，慢慢來喵~🐢" ];
+
+    function saveTasks() { 
+        localStorage.setItem('catTasks', JSON.stringify(tasks)); 
+    }
+
+    // ==========================================
+    // 2. UI 輔助功能
+    // ==========================================
+    let toastTimeout; 
+    function showCatToast(msg) {
+        const toast = document.getElementById('cat-toast');
+        toast.innerHTML = `<i class="ph-fill ph-cat text-3xl text-pink-500"></i> <span class="text-gray-800 leading-snug">${msg}</span>`;
+        toast.classList.remove('opacity-0', 'scale-95', 'pointer-events-none');
+        toast.classList.add('opacity-100', 'scale-100', '-translate-y-2');
+        
+        if (toastTimeout) clearTimeout(toastTimeout);
+        toastTimeout = setTimeout(() => {
+            toast.classList.remove('opacity-100', 'scale-100', '-translate-y-2');
+            toast.classList.add('opacity-0', 'scale-95', 'pointer-events-none');
+        }, 3500);
+    }
 
     function updateDatetimeIcon(inputId, iconId) {
         const val = document.getElementById(inputId).value;
@@ -325,6 +351,13 @@
         return (new Date(d.getTime() - tzOffset)).toISOString().slice(0, 16);
     }
 
+    function closeAlarmWarningModal() {
+        document.getElementById('alarm-warning-modal').classList.add('hidden');
+    }
+
+    // ==========================================
+    // 3. 原生行事曆與 NLP 處理
+    // ==========================================
     function addToNativeCalendar(id) {
         const task = tasks.find(t => String(t.id) === String(id));
         if (!task || !task.dueDate) return alert('這筆記事沒有設定時間喵！🙀');
@@ -408,7 +441,6 @@
 
             if (targetDate) {
                 if (!hasTime) targetDate.setHours(23, 59, 59, 999); 
-                
                 let formatted = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
                 if (hasTime) {
                     let h = targetDate.getHours().toString().padStart(2, '0');
@@ -417,14 +449,12 @@
                 }
                 return { timestamp: targetDate.getTime(), formatted: formatted, hasTime: hasTime };
             }
-        } catch (error) {
-            console.error("NLP 解析錯誤", error);
-        }
+        } catch (error) { console.error("NLP 解析錯誤", error); }
         return null;
     }
 
     // ==========================================
-    // 🔔 背景網頁鬧鐘 (Notification Triggers API)
+    // 4. 通知與背景鬧鐘引擎
     // ==========================================
     async function requestNotificationPermission() {
         try {
@@ -450,7 +480,6 @@
     function scheduleBackgroundNotification(task) {
         if (!('Notification' in window) || !navigator.serviceWorker) return;
         
-        // 檢查是否支援 Notification Triggers API
         if ('showTrigger' in Notification.prototype && 'TimestampTrigger' in window) {
             navigator.serviceWorker.ready.then(reg => {
                 reg.showNotification("🐱 貓咪鬧鐘提醒喵！", {
@@ -463,7 +492,6 @@
             });
         }
         
-        // 針對手機端，顯示強烈提示 Modal (因為大部分手機的省電模式仍會殺死背景網頁計時器)
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         if (isMobile && !localStorage.getItem('mobile_alarm_warned_v2')) {
             setTimeout(() => {
@@ -473,80 +501,16 @@
         }
     }
 
-    // 關閉提示 Modal
-    function closeAlarmWarningModal() {
-        document.getElementById('alarm-warning-modal').classList.add('hidden');
-    }
-
     function cancelBackgroundNotification(taskId) {
         if (!('Notification' in window) || !navigator.serviceWorker) return;
         navigator.serviceWorker.ready.then(async reg => {
             try {
-                // 嘗試抓取尚未觸發的排程通知並關閉
                 const notifications = await reg.getNotifications({ tag: String(taskId), includeTriggered: true });
                 notifications.forEach(n => n.close());
             } catch(e) {}
         });
     }
 
-    // --- 初始化 ---
-    document.addEventListener('DOMContentLoaded', () => {
-        renderTasks();
-        setupPWA();
-        checkInstallState(); 
-        setInterval(checkAlarms, 10000); 
-    });
-
-    window.addEventListener('beforeinstallprompt', (e) => {
-        e.preventDefault();
-        deferredPrompt = e;
-        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches || window.navigator.standalone;
-        if (!isStandalone) {
-            const btn = document.getElementById('install-btn');
-            btn.classList.remove('hidden');
-            btn.classList.add('flex');
-            btn.style.display = 'flex';
-        }
-    });
-
-    function checkInstallState() {
-        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
-                             window.matchMedia('(display-mode: fullscreen)').matches ||
-                             window.navigator.standalone || document.referrer.includes('android-app://');
-        
-        const installBtn = document.getElementById('install-btn');
-        if (isStandalone) {
-            installBtn.style.display = 'none';
-        } else {
-            const ua = navigator.userAgent.toLowerCase();
-            const isIOS = /ipad|iphone|ipod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-            if (isIOS) {
-                installBtn.classList.remove('hidden');
-                installBtn.classList.add('flex');
-                installBtn.style.display = 'flex';
-            }
-        }
-    }
-
-    window.addEventListener('appinstalled', () => { document.getElementById('install-btn').style.display = 'none'; });
-
-    function saveTasks() { localStorage.setItem('catTasks', JSON.stringify(tasks)); }
-
-    let toastTimeout; 
-    function showCatToast(msg) {
-        const toast = document.getElementById('cat-toast');
-        toast.innerHTML = `<i class="ph-fill ph-cat text-3xl text-pink-500"></i> <span class="text-gray-800 leading-snug">${msg}</span>`;
-        toast.classList.remove('opacity-0', 'scale-95', 'pointer-events-none');
-        toast.classList.add('opacity-100', 'scale-100', '-translate-y-2');
-        
-        if (toastTimeout) clearTimeout(toastTimeout);
-        toastTimeout = setTimeout(() => {
-            toast.classList.remove('opacity-100', 'scale-100', '-translate-y-2');
-            toast.classList.add('opacity-0', 'scale-95', 'pointer-events-none');
-        }, 3500);
-    }
-
-    // 網頁開啟時的輔助檢查機制
     function checkAlarms() {
         const now = Date.now();
         let updated = false;
@@ -588,24 +552,9 @@
         }
     }
 
-    function toggleReminder(id) {
-        const task = tasks.find(t => String(t.id) === String(id));
-        if (task && task.hasTime) {
-            task.reminderEnabled = task.reminderEnabled === false ? true : false;
-            if (task.reminderEnabled) {
-                task.notified = false; 
-                showCatToast("開啟提醒喵！🔔");
-                handleNotificationScheduling(task);
-            } else {
-                cancelBackgroundNotification(task.id);
-                showCatToast("已關閉提醒喵！🔕");
-            }
-            saveTasks();
-            renderTasks();
-        }
-    }
-
-    // --- 記事操作 ---
+    // ==========================================
+    // 5. 任務操作核心邏輯
+    // ==========================================
     function addTask() {
         try {
             const input = document.getElementById('task-input');
@@ -656,11 +605,28 @@
             if (datetimeInput) datetimeInput.value = ''; 
             updateDatetimeIcon('task-datetime', 'task-datetime-icon'); 
             renderTasks();
-
             handleNotificationScheduling(newTask);
+            
         } catch (error) {
             console.error("寫下來的過程發生錯誤", error);
             alert("新增失敗，請再試一次喵！🐾");
+        }
+    }
+
+    function toggleReminder(id) {
+        const task = tasks.find(t => String(t.id) === String(id));
+        if (task && task.hasTime) {
+            task.reminderEnabled = task.reminderEnabled === false ? true : false;
+            if (task.reminderEnabled) {
+                task.notified = false; 
+                showCatToast("開啟提醒喵！🔔");
+                handleNotificationScheduling(task);
+            } else {
+                cancelBackgroundNotification(task.id);
+                showCatToast("已關閉提醒喵！🔕");
+            }
+            saveTasks();
+            renderTasks();
         }
     }
 
@@ -727,16 +693,13 @@
                             task.hasTime = false;
                         }
                     }
-                    
                     saveTasks();
                     renderTasks();
                     handleNotificationScheduling(task);
                 }
             }
             closeEditModal();
-        } catch (error) {
-            console.error("修改過程發生錯誤", error);
-        }
+        } catch (error) { console.error("修改過程發生錯誤", error); }
     }
 
     function toggleComplete(id) {
@@ -763,6 +726,9 @@
     function toggleExpand(category) { expandedState[category] = !expandedState[category]; renderTasks(); }
     function toggleTextExpand(id) { if (expandedTextSet.has(id)) expandedTextSet.delete(id); else expandedTextSet.add(id); renderTasks(); }
 
+    // ==========================================
+    // 6. UI 畫面渲染
+    // ==========================================
     function renderTasks() {
         document.getElementById('list-urgent').innerHTML = '';
         document.getElementById('list-slow').innerHTML = '';
@@ -800,16 +766,9 @@
                 let statusText = '期限';
                 
                 if (task.hasTime) {
-                    if (isAlarmActive) {
-                        icon = '🔔';
-                        statusText = '提醒';
-                    } else if (isAlarmOff) {
-                        icon = '🔕';
-                        statusText = '無提醒';
-                    } else if (task.notified) {
-                        icon = '📅';
-                        statusText = '已提醒';
-                    }
+                    if (isAlarmActive) { icon = '🔔'; statusText = '提醒'; } 
+                    else if (isAlarmOff) { icon = '🔕'; statusText = '無提醒'; } 
+                    else if (task.notified) { icon = '📅'; statusText = '已提醒'; }
                 }
                 
                 const colorClass = isOverdue ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-gray-800';
@@ -902,7 +861,9 @@
         });
     }
 
-    // --- 語音輸入 ---
+    // ==========================================
+    // 7. 外部 API 與設定管理 (語音, 匯出入, PWA)
+    // ==========================================
     function startVoiceRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) return alert('抱歉喵！您的瀏覽器不支援語音辨識 😿');
@@ -938,7 +899,6 @@
         };
     }
 
-    // --- Modal 與 PWA ---
     function openDataModal() { document.getElementById('data-modal').classList.remove('hidden'); }
     function closeDataModal() { document.getElementById('data-modal').classList.add('hidden'); }
     
@@ -1009,7 +969,50 @@
     }
 
     function closeInstallModal() { document.getElementById('install-modal').classList.add('hidden'); }
-</script>
 
+    function checkInstallState() {
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
+                             window.matchMedia('(display-mode: fullscreen)').matches ||
+                             window.navigator.standalone || document.referrer.includes('android-app://');
+        
+        const installBtn = document.getElementById('install-btn');
+        if (isStandalone) {
+            installBtn.style.display = 'none';
+        } else {
+            const ua = navigator.userAgent.toLowerCase();
+            const isIOS = /ipad|iphone|ipod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            if (isIOS) {
+                installBtn.classList.remove('hidden');
+                installBtn.classList.add('flex');
+                installBtn.style.display = 'flex';
+            }
+        }
+    }
+
+    // ==========================================
+    // 8. 系統事件監聽綁定
+    // ==========================================
+    document.addEventListener('DOMContentLoaded', () => {
+        renderTasks();
+        setupPWA();
+        checkInstallState(); 
+        setInterval(checkAlarms, 10000); 
+    });
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches || window.navigator.standalone;
+        if (!isStandalone) {
+            const btn = document.getElementById('install-btn');
+            btn.classList.remove('hidden');
+            btn.classList.add('flex');
+            btn.style.display = 'flex';
+        }
+    });
+
+    window.addEventListener('appinstalled', () => { document.getElementById('install-btn').style.display = 'none'; });
+
+</script>
 </body>
 </html>
