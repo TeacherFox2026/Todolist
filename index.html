@@ -72,10 +72,7 @@
         .doodle-input { border-bottom: 2px dashed #9ca3af; background: transparent; }
         .doodle-input:focus { border-bottom: 2px solid #f472b6; }
 
-        /* 手動時間選擇器樣式 */
-        input[type="datetime-local"] {
-            font-family: inherit;
-        }
+        input[type="datetime-local"] { font-family: inherit; }
 
         .app-container { max-width: 480px; margin: 0 auto; min-height: 100vh; background: transparent; }
     </style>
@@ -109,12 +106,11 @@
         <!-- 新增記事區塊 -->
         <section class="doodle-box bg-white p-3">
             <div class="flex items-center gap-2 mb-3 relative">
-                <!-- 加入 onkeypress 支援 Enter 鍵送出 -->
                 <input type="text" id="task-input" placeholder="有什麼事要記下來喵？🐾" 
                        class="w-full doodle-input py-2 pl-2 pr-[4.5rem] focus:ring-0 outline-none text-base text-gray-700"
                        onkeypress="if(event.key === 'Enter') addTask()">
                 
-                <!-- 隱藏的日期時間選擇器 (疊在圖示上，移到麥克風左邊) -->
+                <!-- 隱藏的日期時間選擇器 -->
                 <div class="absolute right-10 flex items-center justify-center w-8 h-8 text-gray-400 hover:text-pink-500 transition cursor-pointer" title="設定提醒時間">
                     <i id="task-datetime-icon" class="ph-bold ph-calendar-plus text-xl"></i>
                     <input type="datetime-local" id="task-datetime" onchange="updateDatetimeIcon('task-datetime', 'task-datetime-icon')" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
@@ -209,7 +205,6 @@
             
             <textarea id="edit-task-input" rows="3" placeholder="請輸入記事內容..." class="w-full doodle-item bg-gray-50 py-3 px-4 outline-none text-base mb-3 resize-none"></textarea>
             
-            <!-- 修改視窗的鬧鐘選擇器與提醒開關 -->
             <div class="flex flex-col gap-3 mb-4 px-1">
                 <div class="flex items-center gap-2">
                     <i class="ph-bold ph-alarm text-pink-400 text-lg flex-shrink-0"></i>
@@ -272,22 +267,13 @@
         if (Array.isArray(parsed)) {
             let needsMigration = false;
             tasks = parsed.map(t => {
-                // 修復 1：舊版的「一般(normal)」分類消失，導致資料隱藏，自動轉移至「慢慢來(slow)」
-                if (t.tag === 'normal') {
-                    t.tag = 'slow';
-                    needsMigration = true;
-                }
-                // 修復 2：補齊舊資料缺少的屬性，避免渲染異常
+                if (t.tag === 'normal') { t.tag = 'slow'; needsMigration = true; }
                 if (t.isCompleted === undefined) { t.isCompleted = false; needsMigration = true; }
                 if (t.reminderEnabled === undefined) { t.reminderEnabled = true; needsMigration = true; }
                 if (typeof t.id === 'number') { t.id = String(t.id); needsMigration = true; }
                 return t;
             });
-            
-            // 如果有升級舊資料，自動存檔
-            if (needsMigration) {
-                localStorage.setItem('catTasks', JSON.stringify(tasks));
-            }
+            if (needsMigration) localStorage.setItem('catTasks', JSON.stringify(tasks));
         }
     } catch (e) {
         console.error('LocalStorage 讀取失敗', e);
@@ -300,7 +286,6 @@
     const catEncouragements = [ "你太棒了喵！🐾", "做的好！獎勵一個罐罐喵~🐟", "喵星人為你驕傲！✨", "太神啦！貓貓崇拜你喵🙀" ];
     const catUncheckEncouragements = [ "沒關係喵，我們重新再來！🐾", "本喵陪你一起重新挑戰喵！💪", "休息一下再出發喵！☕", "不急不急，慢慢來喵~🐢" ];
 
-    // --- 圖示更新 ---
     function updateDatetimeIcon(inputId, iconId) {
         const val = document.getElementById(inputId).value;
         const icon = document.getElementById(iconId);
@@ -315,7 +300,6 @@
         }
     }
 
-    // --- 時間格式化 ---
     function formatForDatetimeLocal(timestamp) {
         if (!timestamp) return '';
         const d = new Date(timestamp);
@@ -323,7 +307,6 @@
         return (new Date(d.getTime() - tzOffset)).toISOString().slice(0, 16);
     }
 
-    // --- 匯出原生行事曆與鬧鐘 (.ics 檔案) ---
     function addToNativeCalendar(id) {
         const task = tasks.find(t => String(t.id) === String(id));
         if (!task || !task.dueDate) return alert('這筆記事沒有設定時間喵！🙀');
@@ -349,7 +332,6 @@
         URL.revokeObjectURL(url);
     }
 
-    // --- 核心：智能萃取文字中的日期與時間 (簡易 NLP) 增加防錯 ---
     function extractDateFromText(text) {
         try {
             const now = new Date();
@@ -423,6 +405,66 @@
         return null;
     }
 
+    // ==========================================
+    // 🔔 背景網頁鬧鐘 (Notification Triggers API)
+    // ==========================================
+    async function requestNotificationPermission() {
+        try {
+            if (!("Notification" in window)) return false;
+            if (Notification.permission === "granted") return true;
+            if (Notification.permission !== "denied") {
+                const permission = await Notification.requestPermission();
+                return permission === "granted";
+            }
+            return false;
+        } catch(e) { 
+            console.error('請求通知失敗', e); 
+            return false;
+        }
+    }
+
+    async function handleNotificationScheduling(task) {
+        if (!task.hasTime || task.reminderEnabled === false || task.isCompleted || !task.dueDate || task.dueDate <= Date.now()) return;
+        const granted = await requestNotificationPermission();
+        if (granted) scheduleBackgroundNotification(task);
+    }
+
+    function scheduleBackgroundNotification(task) {
+        if (!('Notification' in window) || !navigator.serviceWorker) return;
+        
+        // 檢查是否支援 Notification Triggers API (Android Chrome 支援，可在 App 關閉時喚醒)
+        if ('showTrigger' in Notification.prototype && 'TimestampTrigger' in window) {
+            navigator.serviceWorker.ready.then(reg => {
+                reg.showNotification("🐱 貓咪鬧鐘提醒喵！", {
+                    tag: task.id,
+                    body: task.text,
+                    icon: "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐱</text></svg>",
+                    vibrate: [200, 100, 200],
+                    showTrigger: new TimestampTrigger(task.dueDate)
+                }).catch(e => console.log('背景通知排程失敗', e));
+            });
+        } else {
+            // iOS Safari 或不支援的瀏覽器，提示使用者使用行事曆功能
+            setTimeout(() => {
+                if (!localStorage.getItem('bg_warned')) {
+                    showCatToast("💡 若要關閉網頁時也響鈴，建議點擊 ⏰ 寫入系統鬧鐘喵！");
+                    localStorage.setItem('bg_warned', 'true');
+                }
+            }, 3500); 
+        }
+    }
+
+    function cancelBackgroundNotification(taskId) {
+        if (!('Notification' in window) || !navigator.serviceWorker) return;
+        navigator.serviceWorker.ready.then(async reg => {
+            try {
+                // 嘗試抓取尚未觸發的排程通知並關閉
+                const notifications = await reg.getNotifications({ tag: String(taskId), includeTriggered: true });
+                notifications.forEach(n => n.close());
+            } catch(e) {}
+        });
+    }
+
     // --- 初始化 ---
     document.addEventListener('DOMContentLoaded', () => {
         renderTasks();
@@ -480,14 +522,7 @@
         }, 3500);
     }
 
-    function requestNotificationPermission() {
-        try {
-            if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
-                Notification.requestPermission().catch(e => console.log('通知權限取消', e));
-            }
-        } catch(e) { console.error('請求通知失敗', e); }
-    }
-
+    // 網頁開啟時的輔助檢查機制
     function checkAlarms() {
         const now = Date.now();
         let updated = false;
@@ -503,20 +538,15 @@
                     try {
                         if ("Notification" in window && Notification.permission === "granted") {
                             const notifyOptions = { 
+                                tag: task.id,
                                 body: task.text,
                                 icon: "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐱</text></svg>",
                                 vibrate: [200, 100, 200]
                             };
                             
                             if (navigator.serviceWorker) {
-                                navigator.serviceWorker.getRegistration().then(function(reg) {
-                                    if (reg) {
-                                        reg.showNotification("🐱 貓咪鬧鐘提醒喵！", notifyOptions);
-                                    } else {
-                                        new Notification("🐱 貓咪鬧鐘提醒喵！", notifyOptions);
-                                    }
-                                }).catch(function() {
-                                    new Notification("🐱 貓咪鬧鐘提醒喵！", notifyOptions);
+                                navigator.serviceWorker.ready.then(reg => {
+                                    reg.showNotification("🐱 貓咪鬧鐘提醒喵！", notifyOptions);
                                 });
                             } else {
                                 new Notification("🐱 貓咪鬧鐘提醒喵！", notifyOptions);
@@ -528,9 +558,7 @@
         });
         
         if (updated) { 
-            if (alarmTexts.length > 0) {
-                showCatToast(`⏰ 叮咚！時間到囉喵：<br>${alarmTexts.join('<br>')}`);
-            }
+            if (alarmTexts.length > 0) showCatToast(`⏰ 叮咚！時間到囉喵：<br>${alarmTexts.join('<br>')}`);
             saveTasks(); 
             renderTasks(); 
         }
@@ -542,9 +570,10 @@
             task.reminderEnabled = task.reminderEnabled === false ? true : false;
             if (task.reminderEnabled) {
                 task.notified = false; 
-                requestNotificationPermission();
                 showCatToast("開啟提醒喵！🔔");
+                handleNotificationScheduling(task);
             } else {
+                cancelBackgroundNotification(task.id);
                 showCatToast("已關閉提醒喵！🔕");
             }
             saveTasks();
@@ -552,14 +581,13 @@
         }
     }
 
-    // --- 記事操作 (強效防呆版，保證寫下來不卡關) ---
+    // --- 記事操作 ---
     function addTask() {
         try {
             const input = document.getElementById('task-input');
             const text = input.value.trim();
             if (!text) return alert('請輸入記事內容喵！🐾');
 
-            // 確保標籤有被正確讀取，若無則預設為 urgent
             const tagEl = document.querySelector('input[name="task-tag"]:checked');
             const tag = tagEl ? tagEl.value : 'urgent';
             
@@ -570,22 +598,18 @@
             let dateText = null;
             let hasTime = false;
 
-            // 階段 1：若有手動選擇時間
             if (datetimeVal) {
                 const d = new Date(datetimeVal);
                 dueDate = d.getTime();
                 dateText = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
                 hasTime = true;
-                requestNotificationPermission();
             } 
-            // 階段 2：若沒有手動選擇，啟動自動辨識
             else {
                 const extracted = extractDateFromText(text);
                 if (extracted) {
                     dueDate = extracted.timestamp;
                     dateText = extracted.formatted;
                     hasTime = extracted.hasTime;
-                    if (hasTime) requestNotificationPermission();
                 }
             }
 
@@ -608,6 +632,8 @@
             if (datetimeInput) datetimeInput.value = ''; 
             updateDatetimeIcon('task-datetime', 'task-datetime-icon'); 
             renderTasks();
+
+            handleNotificationScheduling(newTask);
         } catch (error) {
             console.error("寫下來的過程發生錯誤", error);
             alert("新增失敗，請再試一次喵！🐾");
@@ -623,6 +649,7 @@
 
     function confirmDeleteTask() {
         const id = document.getElementById('delete-task-id').value;
+        cancelBackgroundNotification(id);
         tasks = tasks.filter(t => String(t.id) !== String(id));
         saveTasks();
         renderTasks();
@@ -653,6 +680,7 @@
             if (newText) {
                 const task = tasks.find(t => String(t.id) === String(id));
                 if (task) {
+                    cancelBackgroundNotification(task.id);
                     task.text = newText;
                     task.reminderEnabled = reminderEnabled;
                     
@@ -662,7 +690,6 @@
                         task.dateText = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
                         task.hasTime = true;
                         task.notified = false;
-                        if (task.reminderEnabled) requestNotificationPermission();
                     } else {
                         const extracted = extractDateFromText(newText);
                         if (extracted) {
@@ -670,7 +697,6 @@
                             task.dateText = extracted.formatted;
                             task.hasTime = extracted.hasTime;
                             task.notified = false;
-                            if (task.hasTime && task.reminderEnabled) requestNotificationPermission();
                         } else {
                             task.dueDate = null;
                             task.dateText = null;
@@ -680,6 +706,7 @@
                     
                     saveTasks();
                     renderTasks();
+                    handleNotificationScheduling(task);
                 }
             }
             closeEditModal();
@@ -693,8 +720,10 @@
         if (task) {
             task.isCompleted = !task.isCompleted;
             if (task.isCompleted) {
+                cancelBackgroundNotification(task.id);
                 showCatToast(catEncouragements[Math.floor(Math.random() * catEncouragements.length)]);
             } else {
+                handleNotificationScheduling(task);
                 showCatToast(catUncheckEncouragements[Math.floor(Math.random() * catUncheckEncouragements.length)]);
             }
             saveTasks();
