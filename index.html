@@ -115,8 +115,9 @@
                     <input type="datetime-local" id="task-datetime" onchange="updateDatetimeIcon('task-datetime', 'task-datetime-icon')" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
                 </div>
 
-                <button onclick="startVoiceRecognition()" id="mic-btn" class="absolute right-1 w-8 h-8 flex items-center justify-center hover:scale-110 transition text-pink-500" title="語音輸入">
-                    <i class="ph-fill ph-microphone-stage text-xl"></i>
+                <!-- 修改：移除 onclick，加入按住說話專用的 class 與 style 防干擾 -->
+                <button id="mic-btn" class="absolute right-1 w-8 h-8 flex items-center justify-center transition-all duration-200 text-pink-500 select-none outline-none" style="touch-action: none; -webkit-user-select: none;" title="按住說話，放開結束">
+                    <i class="ph-fill ph-microphone-stage text-xl pointer-events-none"></i>
                 </button>
             </div>
             
@@ -873,66 +874,40 @@
     let isVoiceListening = false;
     let originalTextBeforeVoice = '';
 
-    function startVoiceRecognition() {
+    function initVoiceRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) return alert('抱歉喵！您的瀏覽器不支援語音辨識 😿');
-
-        const micBtn = document.getElementById('mic-btn');
-        const input = document.getElementById('task-input');
-
-        // Toggle：如果已經在聆聽中，立刻手動停止並恢復 UI
-        if (isVoiceListening) {
-            if (voiceRecognition) {
-                try { voiceRecognition.stop(); } catch(e) {}
-            }
-            isVoiceListening = false;
-            micBtn.innerHTML = '<i class="ph-fill ph-microphone-stage text-xl"></i>';
-            micBtn.classList.remove('animate-bounce', 'text-pink-600');
-            showCatToast('語音輸入已手動結束喵 🐾');
-            return;
+        if (!SpeechRecognition) {
+            alert('抱歉喵！您的瀏覽器不支援語音辨識 😿');
+            return false;
         }
 
-        // 鎖定狀態
-        isVoiceListening = true;
+        if (!voiceRecognition) {
+            voiceRecognition = new SpeechRecognition();
+            voiceRecognition.lang = 'zh-TW';
+            voiceRecognition.interimResults = true; 
+            voiceRecognition.continuous = true; // 允許連續聆聽
+            voiceRecognition.maxAlternatives = 1;
 
-        if (voiceRecognition) {
-            voiceRecognition.onstart = null;
-            voiceRecognition.onresult = null;
-            voiceRecognition.onerror = null;
-            voiceRecognition.onend = null;
-            try { voiceRecognition.abort(); } catch(e){}
-        }
+            voiceRecognition.onstart = () => {
+                isVoiceListening = true;
+                const micBtn = document.getElementById('mic-btn');
+                micBtn.innerHTML = '<i class="ph-bold ph-ear text-xl pointer-events-none"></i>';
+                // 放大按鈕，給予按壓回饋
+                micBtn.classList.add('animate-bounce', 'text-pink-600', 'scale-125');
+                showCatToast('正在聆聽喵... (放開結束) 🐾');
+            };
 
-        voiceRecognition = new SpeechRecognition();
-        voiceRecognition.lang = 'zh-TW';
-        voiceRecognition.interimResults = true; 
-        voiceRecognition.continuous = true; 
-        voiceRecognition.maxAlternatives = 1;
+            voiceRecognition.onresult = (event) => {
+                const input = document.getElementById('task-input');
+                let sessionTranscript = '';
 
-        originalTextBeforeVoice = input.value ? input.value + ' ' : '';
+                // 核心修復：不管停頓幾次，都把「這一次錄音」的所有片段從頭組合一次，徹底杜絕疊字 Bug！
+                for (let i = 0; i < event.results.length; ++i) {
+                    sessionTranscript += event.results[i][0].transcript;
+                }
 
-        voiceRecognition.onstart = () => {
-            micBtn.innerHTML = '<i class="ph-bold ph-ear text-xl"></i>';
-            micBtn.classList.add('animate-bounce', 'text-pink-600');
-            showCatToast('貓貓豎起耳朵聽喵... 🐾');
-        };
-
-        voiceRecognition.onresult = (event) => {
-            let sessionFinalTranscript = '';
-            let interimTranscript = '';
-            let seenTexts = new Set(); 
-
-            // 每次重新組合該回合的所有片段
-            for (let i = 0; i < event.results.length; ++i) {
-                let rawText = event.results[i][0].transcript.trim();
-                if (!rawText) continue;
-
-                // 防止 iOS 派發重複結果
-                if (seenTexts.has(rawText)) continue;
-                seenTexts.add(rawText);
-
-                // 解除標點符號的封印！保留系統自動加入的逗號與句號，只修正同音錯字
-                let text = rawText
+                // 智慧過濾與同音字校正
+                sessionTranscript = sessionTranscript
                            .replace(/名天|鳴天/g, '明天')
                            .replace(/侯天|猴天/g, '後天')
                            .replace(/李白|裡白/g, '禮拜')
@@ -945,40 +920,64 @@
                            .replace(/週[衣醫]/g, '週一')
                            .replace(/點辦/g, '點半');
 
-                if (event.results[i].isFinal) {
-                    // 移除強制加空格的設定，改為直接拼接
-                    sessionFinalTranscript += text;
-                } else {
-                    interimTranscript += text;
+                // 原本文字 + 本次完整語音組合
+                input.value = (originalTextBeforeVoice + sessionTranscript).trim();
+            };
+
+            voiceRecognition.onerror = (event) => {
+                console.error('語音辨識錯誤:', event.error);
+                // 忽略被手動中止的錯誤報告
+                if (event.error !== 'aborted') {
+                    if(event.error === 'no-speech') showCatToast('貓貓沒聽到聲音喵 😿');
+                    else if(event.error === 'audio-capture') showCatToast('麥克風好像沒接好喵 😿');
+                    else if(event.error === 'not-allowed') showCatToast('請允許使用麥克風喵 😿');
                 }
-            }
-            
-            input.value = (originalTextBeforeVoice + sessionFinalTranscript + interimTranscript).trim();
-        };
+                stopVoiceUI();
+            };
 
-        voiceRecognition.onerror = (event) => {
-            console.error('語音辨識錯誤:', event.error);
-            if(event.error === 'no-speech') showCatToast('貓貓沒聽到聲音喵 😿');
-            else if(event.error === 'audio-capture') showCatToast('麥克風好像沒接好喵 😿');
-            else if(event.error === 'not-allowed') showCatToast('請允許使用麥克風喵 😿');
-            
-            isVoiceListening = false;
-            micBtn.innerHTML = '<i class="ph-fill ph-microphone-stage text-xl"></i>';
-            micBtn.classList.remove('animate-bounce', 'text-pink-600');
-        };
+            voiceRecognition.onend = () => {
+                stopVoiceUI();
+            };
+        }
+        return true;
+    }
 
-        voiceRecognition.onend = () => {
-            isVoiceListening = false;
-            micBtn.innerHTML = '<i class="ph-fill ph-microphone-stage text-xl"></i>';
-            micBtn.classList.remove('animate-bounce', 'text-pink-600');
-        };
+    // 按下麥克風：開始錄音
+    function startVoice(e) {
+        if (e && e.type === 'touchstart') e.preventDefault(); // 防止手機雙重觸發
+        if (isVoiceListening) return;
+
+        if (!initVoiceRecognition()) return;
+
+        const input = document.getElementById('task-input');
+        originalTextBeforeVoice = input.value ? input.value + ' ' : '';
 
         try {
             voiceRecognition.start();
-        } catch(e) {
-            console.error('語音啟動失敗', e);
-            isVoiceListening = false;
+        } catch (error) {
+            console.error('語音啟動失敗', error);
         }
+    }
+
+    // 放開麥克風：停止錄音
+    function stopVoice(e) {
+        if (e && e.cancelable && e.type !== 'mouseleave') e.preventDefault();
+        if (!isVoiceListening || !voiceRecognition) return;
+
+        try {
+            voiceRecognition.stop();
+        } catch (error) {
+            console.error('語音停止失敗', error);
+        }
+        stopVoiceUI();
+    }
+
+    // 恢復麥克風按鈕的 UI 狀態
+    function stopVoiceUI() {
+        isVoiceListening = false;
+        const micBtn = document.getElementById('mic-btn');
+        micBtn.innerHTML = '<i class="ph-fill ph-microphone-stage text-xl pointer-events-none"></i>';
+        micBtn.classList.remove('animate-bounce', 'text-pink-600', 'scale-125');
     }
 
     function openDataModal() { document.getElementById('data-modal').classList.remove('hidden'); }
@@ -1079,6 +1078,19 @@
         setupPWA();
         checkInstallState(); 
         setInterval(checkAlarms, 10000); 
+
+        // 綁定「按住說話，放開結束」的事件
+        const micBtn = document.getElementById('mic-btn');
+        
+        // 滑鼠事件 (電腦端)
+        micBtn.addEventListener('mousedown', startVoice);
+        micBtn.addEventListener('mouseup', stopVoice);
+        micBtn.addEventListener('mouseleave', stopVoice); // 滑鼠移開按鈕也自動停止
+        
+        // 觸控事件 (手機端)
+        micBtn.addEventListener('touchstart', startVoice, { passive: false });
+        micBtn.addEventListener('touchend', stopVoice, { passive: false });
+        micBtn.addEventListener('touchcancel', stopVoice, { passive: false });
     });
 
     window.addEventListener('beforeinstallprompt', (e) => {
