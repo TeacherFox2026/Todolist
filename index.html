@@ -144,7 +144,6 @@
                 <h2 class="text-gray-800 text-sm sm:text-base font-bold mb-1.5 flex items-center gap-1">
                     <span class="bg-pink-300 px-2 py-0.5 rounded-md border-2 border-gray-800 shadow-[1px_1px_0px_#1f2937] transform -rotate-2 inline-block"><i class="ph-bold ph-heart"></i> 緊急任務</span>
                 </h2>
-                <!-- 縮減列表間距 -->
                 <ul id="list-urgent" class="space-y-2"></ul>
             </div>
             
@@ -748,7 +747,6 @@
 
         const createLi = (task) => {
             const li = document.createElement('li');
-            // 減小 Padding，使各列高度更緊湊
             li.className = `doodle-item py-1.5 px-2.5 flex items-center gap-2 transition-all ${task.isCompleted ? 'bg-gray-50 opacity-80' : 'bg-white'}`;
             
             let tagBg = task.tag === 'urgent' ? 'bg-pink-200 text-gray-800' : 'bg-blue-200 text-gray-800';
@@ -784,7 +782,6 @@
                 ? `<button onclick="addToNativeCalendar('${task.id}')" class="inline-flex items-center justify-center bg-white text-gray-700 hover:text-green-600 transition hover:scale-105 border border-gray-800 rounded px-1 text-[10px] font-bold shadow-[1px_1px_0px_#1f2937] h-[18px]" title="寫入系統行事曆"><i class="ph-bold ph-calendar-plus mr-0.5 text-[11px]"></i>行事曆</button>`
                 : '';
 
-            // 全新橫排省空間結構
             li.innerHTML = `
                 <!-- 左：純粹的核取方塊 (取消堆疊) -->
                 <div class="flex items-center justify-center flex-shrink-0 w-6 sm:w-7">
@@ -874,7 +871,7 @@
     
     let voiceRecognition = null;
     let isVoiceListening = false;
-    let originalTextBeforeVoice = ''; // 新增：用於記錄語音開始前的文字，徹底解決重複輸入Bug
+    let originalTextBeforeVoice = '';
 
     function startVoiceRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -883,27 +880,38 @@
         const micBtn = document.getElementById('mic-btn');
         const input = document.getElementById('task-input');
 
-        // Toggle：如果正在聆聽中，點擊則「手動停止」並即時恢復按鈕狀態
-        if (isVoiceListening && voiceRecognition) {
-            voiceRecognition.stop();
+        // Toggle：如果已經在聆聽中，立刻手動停止並恢復 UI
+        if (isVoiceListening) {
+            if (voiceRecognition) {
+                try { voiceRecognition.stop(); } catch(e) {}
+            }
             isVoiceListening = false;
             micBtn.innerHTML = '<i class="ph-fill ph-microphone-stage text-xl"></i>';
             micBtn.classList.remove('animate-bounce', 'text-pink-600');
-            showCatToast('語音輸入結束喵 🐾');
+            showCatToast('語音輸入已手動結束喵 🐾');
             return;
+        }
+
+        // 鎖定狀態：防止使用者在啟動延遲期間重複點擊，造成多個實體同時錄音
+        isVoiceListening = true;
+
+        if (voiceRecognition) {
+            voiceRecognition.onstart = null;
+            voiceRecognition.onresult = null;
+            voiceRecognition.onerror = null;
+            voiceRecognition.onend = null;
+            try { voiceRecognition.abort(); } catch(e){}
         }
 
         voiceRecognition = new SpeechRecognition();
         voiceRecognition.lang = 'zh-TW';
         voiceRecognition.interimResults = true; 
         voiceRecognition.continuous = true; 
-        voiceRecognition.maxAlternatives = 1; // 調回 1，避免多重候選詞導致手機端解析錯亂
+        voiceRecognition.maxAlternatives = 1;
 
-        // 紀錄開始語音前的文字
         originalTextBeforeVoice = input.value ? input.value + ' ' : '';
 
         voiceRecognition.onstart = () => {
-            isVoiceListening = true;
             micBtn.innerHTML = '<i class="ph-bold ph-ear text-xl"></i>';
             micBtn.classList.add('animate-bounce', 'text-pink-600');
             showCatToast('貓貓豎起耳朵聽喵... 🐾');
@@ -912,13 +920,18 @@
         voiceRecognition.onresult = (event) => {
             let sessionFinalTranscript = '';
             let interimTranscript = '';
-            
-            // 改為每次都從 0 開始重新組合這一次語音的所有片段，徹底杜絕「重複疊加」的問題
+            let seenTexts = new Set(); // 核心修復：防止 iOS 派發重複結果 (疊字Bug)
+
+            // 每次重新組合該回合的所有片段，徹底杜絕疊字問題
             for (let i = 0; i < event.results.length; ++i) {
-                let text = event.results[i][0].transcript;
-                
-                // 智慧過濾與校正
-                text = text.replace(/[。，、？！.,?!]+$/g, '') 
+                let rawText = event.results[i][0].transcript.trim();
+                if (!rawText) continue;
+
+                // 核心修復：過濾同回合內回傳重複的句子片段
+                if (seenTexts.has(rawText)) continue;
+                seenTexts.add(rawText);
+
+                let text = rawText.replace(/[。，、？！.,?!]+$/g, '') 
                            .replace(/名天|鳴天/g, '明天')
                            .replace(/侯天|猴天/g, '後天')
                            .replace(/李白|裡白/g, '禮拜')
@@ -938,7 +951,6 @@
                 }
             }
             
-            // 將「原本文字」+「這回合確定的文字」+「這回合猶豫中的文字」合併
             input.value = (originalTextBeforeVoice + sessionFinalTranscript + interimTranscript).trim();
         };
 
@@ -963,6 +975,7 @@
             voiceRecognition.start();
         } catch(e) {
             console.error('語音啟動失敗', e);
+            isVoiceListening = false;
         }
     }
 
