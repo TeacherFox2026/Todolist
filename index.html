@@ -892,7 +892,7 @@
             return;
         }
 
-        // 鎖定狀態：防止使用者在啟動延遲期間重複點擊，造成多個實體同時錄音
+        // 鎖定狀態
         isVoiceListening = true;
 
         if (voiceRecognition) {
@@ -920,18 +920,19 @@
         voiceRecognition.onresult = (event) => {
             let sessionFinalTranscript = '';
             let interimTranscript = '';
-            let seenTexts = new Set(); // 核心修復：防止 iOS 派發重複結果 (疊字Bug)
+            let seenTexts = new Set(); 
 
-            // 每次重新組合該回合的所有片段，徹底杜絕疊字問題
+            // 每次重新組合該回合的所有片段
             for (let i = 0; i < event.results.length; ++i) {
                 let rawText = event.results[i][0].transcript.trim();
                 if (!rawText) continue;
 
-                // 核心修復：過濾同回合內回傳重複的句子片段
+                // 防止 iOS 派發重複結果
                 if (seenTexts.has(rawText)) continue;
                 seenTexts.add(rawText);
 
-                let text = rawText.replace(/[。，、？！.,?!]+$/g, '') 
+                // 解除標點符號的封印！保留系統自動加入的逗號與句號，只修正同音錯字
+                let text = rawText
                            .replace(/名天|鳴天/g, '明天')
                            .replace(/侯天|猴天/g, '後天')
                            .replace(/李白|裡白/g, '禮拜')
@@ -945,7 +946,8 @@
                            .replace(/點辦/g, '點半');
 
                 if (event.results[i].isFinal) {
-                    sessionFinalTranscript += text + ' ';
+                    // 移除強制加空格的設定，改為直接拼接
+                    sessionFinalTranscript += text;
                 } else {
                     interimTranscript += text;
                 }
