@@ -871,39 +871,89 @@
     // ==========================================
     // 7. 外部 API 與設定管理 (語音, 匯出入, PWA)
     // ==========================================
+    
+    let voiceRecognition = null;
+    let isVoiceListening = false;
+
     function startVoiceRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) return alert('抱歉喵！您的瀏覽器不支援語音辨識 😿');
 
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'zh-TW';
-        recognition.interimResults = true; 
-        recognition.maxAlternatives = 1;
-
         const micBtn = document.getElementById('mic-btn');
         const input = document.getElementById('task-input');
-        micBtn.innerHTML = '<i class="ph-bold ph-ear"></i>';
-        micBtn.classList.add('animate-bounce', 'text-pink-600');
+
+        // 如果正在聆聽中，點擊則手動停止 (Toggle 功能)
+        if (isVoiceListening && voiceRecognition) {
+            voiceRecognition.stop();
+            return;
+        }
+
+        voiceRecognition = new SpeechRecognition();
+        voiceRecognition.lang = 'zh-TW';
+        voiceRecognition.interimResults = true; 
+        voiceRecognition.continuous = true; // 開啟連續辨識，使用者停頓不會馬上斷掉
+        voiceRecognition.maxAlternatives = 3; // 提高候選詞數量，增加底層引擎的精準度
 
         let originalText = input.value ? input.value + ' ' : '';
-        recognition.start();
 
-        recognition.onresult = (event) => {
-            let interimTranscript = '';
-            let finalTranscript = '';
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript;
-                else interimTranscript += event.results[i][0].transcript;
-            }
-            input.value = (originalText + finalTranscript + interimTranscript).trim();
-            if (finalTranscript) originalText = (originalText + finalTranscript + ' ');
+        voiceRecognition.onstart = () => {
+            isVoiceListening = true;
+            micBtn.innerHTML = '<i class="ph-bold ph-ear text-xl"></i>';
+            micBtn.classList.add('animate-bounce', 'text-pink-600');
+            showCatToast('貓貓豎起耳朵聽喵... 🐾');
         };
 
-        recognition.onerror = (event) => console.error('語音辨識錯誤:', event.error);
-        recognition.onend = () => {
+        voiceRecognition.onresult = (event) => {
+            let interimTranscript = '';
+            let finalTranscript = '';
+            
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    // 🌟 智慧語音校正引擎：過濾標點並修正常見同音錯字，大幅提升日期解析精準度
+                    let cleanedText = event.results[i][0].transcript
+                        .replace(/[。，、？！.,?!]+$/g, '') 
+                        .replace(/名天|鳴天/g, '明天')
+                        .replace(/侯天|猴天/g, '後天')
+                        .replace(/李白|裡白/g, '禮拜')
+                        .replace(/星[期旗][衣醫一]/g, '星期一')
+                        .replace(/星[期旗][耳二]/g, '星期二')
+                        .replace(/星[期旗][傘三]/g, '星期三')
+                        .replace(/星[期旗][寺四]/g, '星期四')
+                        .replace(/星[期旗][舞五]/g, '星期五')
+                        .replace(/星[期旗][溜六]/g, '星期六')
+                        .replace(/週[衣醫]/g, '週一')
+                        .replace(/點辦/g, '點半');
+                    finalTranscript += cleanedText;
+                } else {
+                    interimTranscript += event.results[i][0].transcript;
+                }
+            }
+            
+            input.value = (originalText + finalTranscript + interimTranscript).trim();
+            if (finalTranscript) {
+                originalText = (originalText + finalTranscript + ' ');
+            }
+        };
+
+        voiceRecognition.onerror = (event) => {
+            console.error('語音辨識錯誤:', event.error);
+            if(event.error === 'no-speech') showCatToast('貓貓沒聽到聲音喵 😿');
+            else if(event.error === 'audio-capture') showCatToast('麥克風好像沒接好喵 😿');
+            else if(event.error === 'not-allowed') showCatToast('請允許使用麥克風喵 😿');
+            isVoiceListening = false;
+        };
+
+        voiceRecognition.onend = () => {
+            isVoiceListening = false;
             micBtn.innerHTML = '<i class="ph-fill ph-microphone-stage text-xl"></i>';
             micBtn.classList.remove('animate-bounce', 'text-pink-600');
         };
+
+        try {
+            voiceRecognition.start();
+        } catch(e) {
+            console.error('語音啟動失敗', e);
+        }
     }
 
     function openDataModal() { document.getElementById('data-modal').classList.remove('hidden'); }
