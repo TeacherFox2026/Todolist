@@ -874,6 +874,7 @@
     
     let voiceRecognition = null;
     let isVoiceListening = false;
+    let originalTextBeforeVoice = ''; // 新增：用於記錄語音開始前的文字，徹底解決重複輸入Bug
 
     function startVoiceRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -882,19 +883,24 @@
         const micBtn = document.getElementById('mic-btn');
         const input = document.getElementById('task-input');
 
-        // 如果正在聆聽中，點擊則手動停止 (Toggle 功能)
+        // Toggle：如果正在聆聽中，點擊則「手動停止」並即時恢復按鈕狀態
         if (isVoiceListening && voiceRecognition) {
             voiceRecognition.stop();
+            isVoiceListening = false;
+            micBtn.innerHTML = '<i class="ph-fill ph-microphone-stage text-xl"></i>';
+            micBtn.classList.remove('animate-bounce', 'text-pink-600');
+            showCatToast('語音輸入結束喵 🐾');
             return;
         }
 
         voiceRecognition = new SpeechRecognition();
         voiceRecognition.lang = 'zh-TW';
         voiceRecognition.interimResults = true; 
-        voiceRecognition.continuous = true; // 開啟連續辨識，使用者停頓不會馬上斷掉
-        voiceRecognition.maxAlternatives = 3; // 提高候選詞數量，增加底層引擎的精準度
+        voiceRecognition.continuous = true; 
+        voiceRecognition.maxAlternatives = 1; // 調回 1，避免多重候選詞導致手機端解析錯亂
 
-        let originalText = input.value ? input.value + ' ' : '';
+        // 紀錄開始語音前的文字
+        originalTextBeforeVoice = input.value ? input.value + ' ' : '';
 
         voiceRecognition.onstart = () => {
             isVoiceListening = true;
@@ -904,35 +910,36 @@
         };
 
         voiceRecognition.onresult = (event) => {
+            let sessionFinalTranscript = '';
             let interimTranscript = '';
-            let finalTranscript = '';
             
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
+            // 改為每次都從 0 開始重新組合這一次語音的所有片段，徹底杜絕「重複疊加」的問題
+            for (let i = 0; i < event.results.length; ++i) {
+                let text = event.results[i][0].transcript;
+                
+                // 智慧過濾與校正
+                text = text.replace(/[。，、？！.,?!]+$/g, '') 
+                           .replace(/名天|鳴天/g, '明天')
+                           .replace(/侯天|猴天/g, '後天')
+                           .replace(/李白|裡白/g, '禮拜')
+                           .replace(/星[期旗][衣醫一]/g, '星期一')
+                           .replace(/星[期旗][耳二]/g, '星期二')
+                           .replace(/星[期旗][傘三]/g, '星期三')
+                           .replace(/星[期旗][寺四]/g, '星期四')
+                           .replace(/星[期旗][舞五]/g, '星期五')
+                           .replace(/星[期旗][溜六]/g, '星期六')
+                           .replace(/週[衣醫]/g, '週一')
+                           .replace(/點辦/g, '點半');
+
                 if (event.results[i].isFinal) {
-                    // 🌟 智慧語音校正引擎：過濾標點並修正常見同音錯字，大幅提升日期解析精準度
-                    let cleanedText = event.results[i][0].transcript
-                        .replace(/[。，、？！.,?!]+$/g, '') 
-                        .replace(/名天|鳴天/g, '明天')
-                        .replace(/侯天|猴天/g, '後天')
-                        .replace(/李白|裡白/g, '禮拜')
-                        .replace(/星[期旗][衣醫一]/g, '星期一')
-                        .replace(/星[期旗][耳二]/g, '星期二')
-                        .replace(/星[期旗][傘三]/g, '星期三')
-                        .replace(/星[期旗][寺四]/g, '星期四')
-                        .replace(/星[期旗][舞五]/g, '星期五')
-                        .replace(/星[期旗][溜六]/g, '星期六')
-                        .replace(/週[衣醫]/g, '週一')
-                        .replace(/點辦/g, '點半');
-                    finalTranscript += cleanedText;
+                    sessionFinalTranscript += text + ' ';
                 } else {
-                    interimTranscript += event.results[i][0].transcript;
+                    interimTranscript += text;
                 }
             }
             
-            input.value = (originalText + finalTranscript + interimTranscript).trim();
-            if (finalTranscript) {
-                originalText = (originalText + finalTranscript + ' ');
-            }
+            // 將「原本文字」+「這回合確定的文字」+「這回合猶豫中的文字」合併
+            input.value = (originalTextBeforeVoice + sessionFinalTranscript + interimTranscript).trim();
         };
 
         voiceRecognition.onerror = (event) => {
@@ -940,7 +947,10 @@
             if(event.error === 'no-speech') showCatToast('貓貓沒聽到聲音喵 😿');
             else if(event.error === 'audio-capture') showCatToast('麥克風好像沒接好喵 😿');
             else if(event.error === 'not-allowed') showCatToast('請允許使用麥克風喵 😿');
+            
             isVoiceListening = false;
+            micBtn.innerHTML = '<i class="ph-fill ph-microphone-stage text-xl"></i>';
+            micBtn.classList.remove('animate-bounce', 'text-pink-600');
         };
 
         voiceRecognition.onend = () => {
