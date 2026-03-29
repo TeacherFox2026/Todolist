@@ -84,7 +84,7 @@
 
 <div class="app-container relative flex flex-col h-screen overflow-hidden">
     
-    <!-- Header 區塊 (壓縮高度) -->
+    <!-- Header 區塊 -->
     <header class="doodle-box bg-yellow-200 p-2 sm:p-3 z-10 flex justify-between items-center relative mx-3 mt-3 mb-2">
         <h1 class="text-xl sm:text-2xl font-extrabold text-gray-800 tracking-wide flex items-center gap-2">
             <i class="ph-fill ph-cat text-2xl sm:text-3xl text-pink-500"></i> 貓咪記事本
@@ -99,7 +99,7 @@
         </div>
     </header>
 
-    <!-- 內容捲動區 (縮減區塊間距) -->
+    <!-- 內容捲動區 -->
     <main class="flex-1 overflow-y-auto p-3 space-y-3 pb-24">
         
         <!-- 新增記事區塊 -->
@@ -115,7 +115,7 @@
                     <input type="datetime-local" id="task-datetime" onchange="updateDatetimeIcon('task-datetime', 'task-datetime-icon')" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
                 </div>
 
-                <!-- 修改：加入 oncontextmenu 與 -webkit-touch-callout 防止手機長按跳出選單干擾中斷 -->
+                <!-- 加入 oncontextmenu 與 -webkit-touch-callout 防止手機長按跳出選單 -->
                 <button id="mic-btn" class="absolute right-1 w-8 h-8 flex items-center justify-center transition-all duration-200 text-pink-500 select-none outline-none" style="touch-action: none; -webkit-user-select: none; -webkit-touch-callout: none;" title="按住說話，放開結束" oncontextmenu="return false;">
                     <i class="ph-fill ph-microphone-stage text-xl pointer-events-none"></i>
                 </button>
@@ -726,7 +726,7 @@
     function toggleTextExpand(id) { if (expandedTextSet.has(id)) expandedTextSet.delete(id); else expandedTextSet.add(id); renderTasks(); }
 
     // ==========================================
-    // 6. UI 畫面渲染 (極致壓縮空間版)
+    // 6. UI 畫面渲染
     // ==========================================
     function renderTasks() {
         document.getElementById('list-urgent').innerHTML = '';
@@ -784,7 +784,7 @@
                 : '';
 
             li.innerHTML = `
-                <!-- 左：純粹的核取方塊 (取消堆疊) -->
+                <!-- 左：純粹的核取方塊 -->
                 <div class="flex items-center justify-center flex-shrink-0 w-6 sm:w-7">
                     <input type="checkbox" onchange="toggleComplete('${task.id}')" ${task.isCompleted ? 'checked' : ''} class="w-5 h-5 sm:w-6 sm:h-6 m-0">
                 </div>
@@ -795,7 +795,7 @@
                         ${task.text}
                     </div>
                     
-                    <!-- 標籤區大整合 (橫向自動換行) -->
+                    <!-- 標籤區大整合 -->
                     <div class="flex items-center flex-wrap gap-1.5 mt-1">
                         <div class="relative w-max">
                             <select onchange="changeTag('${task.id}', this.value)" class="appearance-none w-full text-center cursor-pointer text-[10px] font-bold py-0 pl-1 pr-3 border border-gray-800 focus:outline-none ${tagBg} doodle-btn" style="box-shadow: 1px 1px 0px #1f2937; border-radius: 4px; height: 18px;">
@@ -816,7 +816,7 @@
                     </div>
                 </div>
                 
-                <!-- 右：操作按鈕 (改為橫向緊密排列) -->
+                <!-- 右：操作按鈕 -->
                 <div class="flex flex-row items-center justify-end gap-1.5 flex-shrink-0">
                     <button onclick="editTask('${task.id}')" class="text-gray-500 hover:text-blue-500 transition hover:scale-110 flex items-center justify-center h-7 w-7 bg-gray-50 border border-gray-300 rounded shadow-sm" title="修改"><i class="ph-bold ph-pencil-simple text-sm sm:text-base"></i></button>
                     <button onclick="deleteTask('${task.id}')" class="text-gray-500 hover:text-red-500 transition hover:scale-110 flex items-center justify-center h-7 w-7 bg-gray-50 border border-gray-300 rounded shadow-sm" title="刪除"><i class="ph-bold ph-trash text-sm sm:text-base"></i></button>
@@ -871,9 +871,9 @@
     // ==========================================
     
     let voiceRecognition = null;
-    let isVoiceListening = false;
-    let intentionallyStopped = false; // 核心新增：追蹤是否為使用者「手動放開手指」
-    let originalTextBeforeVoice = '';
+    let isHolding = false;
+    let preHoldText = '';
+    let sessionFinalText = '';
 
     function initVoiceRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -885,8 +885,9 @@
         if (!voiceRecognition) {
             voiceRecognition = new SpeechRecognition();
             voiceRecognition.lang = 'zh-TW';
-            voiceRecognition.interimResults = true; 
-            voiceRecognition.continuous = true; 
+            voiceRecognition.interimResults = true;
+            // 🔥 核心重構：關閉 continuous！強迫系統每次停頓都觸發 onend，然後我們自己無縫重啟
+            voiceRecognition.continuous = false;
             voiceRecognition.maxAlternatives = 1;
 
             voiceRecognition.onstart = () => {
@@ -898,49 +899,66 @@
             };
 
             voiceRecognition.onresult = (event) => {
-                const input = document.getElementById('task-input');
-                let sessionTranscript = '';
+                let currentFinal = '';
+                let currentInterim = '';
 
-                for (let i = 0; i < event.results.length; ++i) {
-                    sessionTranscript += event.results[i][0].transcript;
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    let rawText = event.results[i][0].transcript.trim();
+                    if (!rawText) continue;
+
+                    let text = rawText
+                        .replace(/[。，、？！.,?!]+$/g, '')
+                        .replace(/名天|鳴天/g, '明天')
+                        .replace(/侯天|猴天/g, '後天')
+                        .replace(/李白|裡白/g, '禮拜')
+                        .replace(/星[期旗][衣醫一]/g, '星期一')
+                        .replace(/星[期旗][耳二]/g, '星期二')
+                        .replace(/星[期旗][傘三]/g, '星期三')
+                        .replace(/星[期旗][寺四]/g, '星期四')
+                        .replace(/星[期旗][舞五]/g, '星期五')
+                        .replace(/星[期旗][溜六]/g, '星期六')
+                        .replace(/週[衣醫]/g, '週一')
+                        .replace(/點辦/g, '點半');
+
+                    if (event.results[i].isFinal) {
+                        currentFinal += text;
+                    } else {
+                        currentInterim += text;
+                    }
                 }
 
-                sessionTranscript = sessionTranscript
-                           .replace(/名天|鳴天/g, '明天')
-                           .replace(/侯天|猴天/g, '後天')
-                           .replace(/李白|裡白/g, '禮拜')
-                           .replace(/星[期旗][衣醫一]/g, '星期一')
-                           .replace(/星[期旗][耳二]/g, '星期二')
-                           .replace(/星[期旗][傘三]/g, '星期三')
-                           .replace(/星[期旗][寺四]/g, '星期四')
-                           .replace(/星[期旗][舞五]/g, '星期五')
-                           .replace(/星[期旗][溜六]/g, '星期六')
-                           .replace(/週[衣醫]/g, '週一')
-                           .replace(/點辦/g, '點半');
+                if (currentFinal) {
+                    sessionFinalText += currentFinal;
+                }
 
-                input.value = (originalTextBeforeVoice + sessionTranscript).trim();
+                const input = document.getElementById('task-input');
+                // 🔥 絕對不會疊字的文字組合法：原始文字 + 本次完整句子 + 正在辨識的碎片
+                input.value = (preHoldText + sessionFinalText + currentInterim).trim();
             };
 
             voiceRecognition.onerror = (event) => {
                 console.error('語音辨識錯誤:', event.error);
                 if (event.error === 'not-allowed' || event.error === 'audio-capture') {
-                    intentionallyStopped = true; 
+                    isHolding = false;
                     if(event.error === 'audio-capture') showCatToast('麥克風好像沒接好喵 😿');
                     else if(event.error === 'not-allowed') showCatToast('請允許使用麥克風喵 😿');
                     stopVoiceUI();
                 }
-                // 忽略 no-speech (自動斷掉時交由 onend 無縫重新啟動)
+                // 忽略 no-speech，系統自動結束後會進到 onend 幫我們重啟
             };
 
             voiceRecognition.onend = () => {
-                // 核心修復：如果系統因為停頓而自動切斷，但使用者「還沒放開手指」，則無縫自動重啟！
-                if (!intentionallyStopped && isVoiceListening) {
-                    const input = document.getElementById('task-input');
-                    originalTextBeforeVoice = input.value ? input.value + ' ' : '';
+                if (isHolding) {
+                    // 🔥 只要手指還沒放開，不管系統怎麼強制結束，我們都在短時間內無縫重啟！
                     try {
                         voiceRecognition.start();
                     } catch(e) {
-                        stopVoiceUI();
+                        // 若因為極短時間重複觸發報錯，延遲 50ms 再啟動一次
+                        setTimeout(() => {
+                            if (isHolding) {
+                                try { voiceRecognition.start(); } catch(e) { stopVoiceUI(); }
+                            }
+                        }, 50);
                     }
                 } else {
                     stopVoiceUI();
@@ -951,15 +969,16 @@
     }
 
     function startVoice(e) {
-        if (e && e.type === 'touchstart') e.preventDefault(); 
-        if (isVoiceListening) return;
+        if (e && e.type === 'touchstart') e.preventDefault();
+        if (isHolding) return;
 
         if (!initVoiceRecognition()) return;
 
-        isVoiceListening = true;
-        intentionallyStopped = false; // 重置放開手指的標記
+        isHolding = true;
+        sessionFinalText = ''; // 每次按住時清空這次的暫存
         const input = document.getElementById('task-input');
-        originalTextBeforeVoice = input.value ? input.value + ' ' : '';
+        // 確保加上空格分隔原本的文字
+        preHoldText = input.value ? input.value + ' ' : '';
 
         showCatToast('正在聆聽喵... (放開結束) 🐾');
 
@@ -972,19 +991,17 @@
 
     function stopVoice(e) {
         if (e && e.cancelable && e.type !== 'mouseleave') e.preventDefault();
-        if (!isVoiceListening) return;
+        if (!isHolding) return;
 
-        intentionallyStopped = true; // 標記為使用者已主動放開手指
+        isHolding = false;
         try {
             if (voiceRecognition) voiceRecognition.stop();
-        } catch (error) {
-            console.error('語音停止失敗', error);
-        }
+        } catch (error) {}
         stopVoiceUI();
     }
 
     function stopVoiceUI() {
-        isVoiceListening = false;
+        isHolding = false;
         const micBtn = document.getElementById('mic-btn');
         if (micBtn) {
             micBtn.innerHTML = '<i class="ph-fill ph-microphone-stage text-xl pointer-events-none"></i>';
