@@ -115,8 +115,8 @@
                     <input type="datetime-local" id="task-datetime" onchange="updateDatetimeIcon('task-datetime', 'task-datetime-icon')" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
                 </div>
 
-                <!-- 加入 oncontextmenu 與 -webkit-touch-callout 防止手機長按跳出選單 -->
-                <button id="mic-btn" class="absolute right-1 w-8 h-8 flex items-center justify-center transition-all duration-200 text-pink-500 select-none outline-none" style="touch-action: none; -webkit-user-select: none; -webkit-touch-callout: none;" title="按住說話，放開結束" oncontextmenu="return false;">
+                <!-- 語音按鈕：防止手機長按選單干擾 -->
+                <button id="mic-btn" class="absolute right-1 w-8 h-8 flex items-center justify-center transition-all duration-200 text-pink-500 select-none outline-none" style="touch-action: none; -webkit-user-select: none; -webkit-touch-callout: none;" title="短按切換，長按不放" oncontextmenu="return false;">
                     <i class="ph-fill ph-microphone-stage text-xl pointer-events-none"></i>
                 </button>
             </div>
@@ -867,11 +867,12 @@
     }
 
     // ==========================================
-    // 7. 外部 API 與設定管理 (語音, 匯出入, PWA)
+    // 7. 外部 API 與雙模語音引擎 (Tap 短按 / Hold 長按)
     // ==========================================
-    
     let voiceRecognition = null;
-    let isHolding = false;
+    let isPhysicalHolding = false;
+    let currentVoiceMode = 'none'; // 'none', 'tap', 'hold', 'pending'
+    let holdTimer = null;
     let preHoldText = '';
     let sessionFinalText = '';
 
@@ -886,7 +887,7 @@
             voiceRecognition = new SpeechRecognition();
             voiceRecognition.lang = 'zh-TW';
             voiceRecognition.interimResults = true;
-            // 🔥 核心重構：關閉 continuous！強迫系統每次停頓都觸發 onend，然後我們自己無縫重啟
+            // 關閉系統內建連續，交由我們的雙模機制接管
             voiceRecognition.continuous = false;
             voiceRecognition.maxAlternatives = 1;
 
@@ -932,34 +933,35 @@
                 }
 
                 const input = document.getElementById('task-input');
-                // 🔥 絕對不會疊字的文字組合法：原始文字 + 本次完整句子 + 正在辨識的碎片
+                // 絕對不會疊字的組合法
                 input.value = (preHoldText + sessionFinalText + currentInterim).trim();
             };
 
             voiceRecognition.onerror = (event) => {
                 console.error('語音辨識錯誤:', event.error);
                 if (event.error === 'not-allowed' || event.error === 'audio-capture') {
-                    isHolding = false;
                     if(event.error === 'audio-capture') showCatToast('麥克風好像沒接好喵 😿');
                     else if(event.error === 'not-allowed') showCatToast('請允許使用麥克風喵 😿');
                     stopVoiceUI();
                 }
-                // 忽略 no-speech，系統自動結束後會進到 onend 幫我們重啟
+                // 忽略 no-speech，讓 onend 去決定要不要無縫重啟
             };
 
             voiceRecognition.onend = () => {
-                if (isHolding) {
-                    // 🔥 只要手指還沒放開，不管系統怎麼強制結束，我們都在短時間內無縫重啟！
+                if (isPhysicalHolding) {
+                    // 長按模式：系統擅自切斷，只要手指沒放開就立刻無縫重啟！
                     try {
                         voiceRecognition.start();
                     } catch(e) {
-                        // 若因為極短時間重複觸發報錯，延遲 50ms 再啟動一次
                         setTimeout(() => {
-                            if (isHolding) {
+                            if (isPhysicalHolding) {
                                 try { voiceRecognition.start(); } catch(e) { stopVoiceUI(); }
                             }
                         }, 50);
                     }
+                } else if (currentVoiceMode === 'tap') {
+                    // 短按模式：使用者停頓不講話了，系統切斷，這正是我們要的自然結束。
+                    stopVoiceUI();
                 } else {
                     stopVoiceUI();
                 }
@@ -968,32 +970,59 @@
         return true;
     }
 
-    function startVoice(e) {
-        if (e && e.type === 'touchstart') e.preventDefault();
-        if (isHolding) return;
+    // 處理手指按下 / 滑鼠按下
+    function handlePointerDown(e) {
+        if (e && e.type === 'touchstart') e.preventDefault(); // 防止手機端雙重觸發
 
+        // 如果目前是短按聆聽中，再次點擊代表「手動停止」
+        if (currentVoiceMode === 'tap') {
+            stopVoice();
+            return;
+        }
+
+        if (isPhysicalHolding) return; // 已經按住就不重複觸發
         if (!initVoiceRecognition()) return;
 
-        isHolding = true;
-        sessionFinalText = ''; // 每次按住時清空這次的暫存
+        isPhysicalHolding = true;
+        currentVoiceMode = 'pending'; // 正在判定是點擊還是長按
+        sessionFinalText = ''; 
         const input = document.getElementById('task-input');
-        // 確保加上空格分隔原本的文字
         preHoldText = input.value ? input.value + ' ' : '';
-
-        showCatToast('正在聆聽喵... (放開結束) 🐾');
 
         try {
             voiceRecognition.start();
-        } catch (error) {
-            console.error('語音啟動失敗', error);
+        } catch (error) {}
+
+        // 計時器：超過 0.4 秒就認定為「長按模式」
+        holdTimer = setTimeout(() => {
+            if (isPhysicalHolding) {
+                currentVoiceMode = 'hold';
+                showCatToast('長按強制聆聽... (放開結束) 🐾');
+            }
+        }, 400);
+    }
+
+    // 處理手指放開 / 滑鼠放開 / 移開
+    function handlePointerUp(e) {
+        if (e && e.cancelable && e.type !== 'mouseleave') e.preventDefault();
+
+        if (!isPhysicalHolding) return;
+        isPhysicalHolding = false;
+
+        if (holdTimer) clearTimeout(holdTimer);
+
+        if (currentVoiceMode === 'pending') {
+            // 在 0.4 秒內就放開了，進入「短按模式」
+            currentVoiceMode = 'tap';
+            showCatToast('短按聆聽中喵... (再次點擊或停頓結束) 🐾');
+        } else if (currentVoiceMode === 'hold') {
+            // 是長按模式，既然放開了就立刻結束
+            stopVoice();
         }
     }
 
-    function stopVoice(e) {
-        if (e && e.cancelable && e.type !== 'mouseleave') e.preventDefault();
-        if (!isHolding) return;
-
-        isHolding = false;
+    function stopVoice() {
+        isPhysicalHolding = false;
         try {
             if (voiceRecognition) voiceRecognition.stop();
         } catch (error) {}
@@ -1001,7 +1030,9 @@
     }
 
     function stopVoiceUI() {
-        isHolding = false;
+        isPhysicalHolding = false;
+        currentVoiceMode = 'none';
+        if (holdTimer) clearTimeout(holdTimer);
         const micBtn = document.getElementById('mic-btn');
         if (micBtn) {
             micBtn.innerHTML = '<i class="ph-fill ph-microphone-stage text-xl pointer-events-none"></i>';
@@ -1108,18 +1139,18 @@
         checkInstallState(); 
         setInterval(checkAlarms, 10000); 
 
-        // 綁定「按住說話，放開結束」的事件
+        // 綁定「雙模語音」的事件
         const micBtn = document.getElementById('mic-btn');
         
         // 滑鼠事件 (電腦端)
-        micBtn.addEventListener('mousedown', startVoice);
-        micBtn.addEventListener('mouseup', stopVoice);
-        micBtn.addEventListener('mouseleave', stopVoice); // 滑鼠移開按鈕也自動停止
+        micBtn.addEventListener('mousedown', handlePointerDown);
+        micBtn.addEventListener('mouseup', handlePointerUp);
+        micBtn.addEventListener('mouseleave', handlePointerUp); // 移開按鈕視同放開
         
         // 觸控事件 (手機端)
-        micBtn.addEventListener('touchstart', startVoice, { passive: false });
-        micBtn.addEventListener('touchend', stopVoice, { passive: false });
-        micBtn.addEventListener('touchcancel', stopVoice, { passive: false });
+        micBtn.addEventListener('touchstart', handlePointerDown, { passive: false });
+        micBtn.addEventListener('touchend', handlePointerUp, { passive: false });
+        micBtn.addEventListener('touchcancel', handlePointerUp, { passive: false });
     });
 
     window.addEventListener('beforeinstallprompt', (e) => {
